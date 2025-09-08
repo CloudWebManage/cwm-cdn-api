@@ -36,3 +36,11 @@ async def list_(tenant_id):
         print(domain)
         num_domains += 1
     print(f'Total domains: {num_domains}', file=sys.stderr)
+
+
+@main.command()
+@click.argument('zone_file')
+@click.option('--daemon', is_flag=True)
+async def zone_writer(zone_file, daemon):
+    from . import zone_writer
+    await zone_writer.main(zone_file, daemon)
