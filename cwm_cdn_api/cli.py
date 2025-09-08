@@ -20,6 +20,8 @@ async def main():
 
 for submodule in [
     'tenants',
+    'domains',
+    'origins',
 ]:
     main.add_command(getattr(importlib.import_module(f'.{submodule}.cli', __package__), 'main'), name=submodule.replace('_', '-'))
 
