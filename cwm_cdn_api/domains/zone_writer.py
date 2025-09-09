@@ -56,8 +56,6 @@ async def main(zone_filepath, daemon=False):
         with open(zone_filepath_json, 'r') as f:
             if f.read().strip() == apex_records_json:
                 return
-    with open(zone_filepath_json, 'w') as f:
-        f.write(apex_records_json)
     num_apex = 0
     num_records = 0
     serial = _serial()
@@ -76,4 +74,6 @@ async def main(zone_filepath, daemon=False):
     except:
         os.remove(tmp.name)
         raise
+    with open(zone_filepath_json, 'w') as f:
+        f.write(apex_records_json)
     print(f'Wrote {num_records} records in {num_apex} zones to {zone_filepath}', file=sys.stderr)
