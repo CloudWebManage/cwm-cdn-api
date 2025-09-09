@@ -1,5 +1,6 @@
 import os
 import sys
+import shutil
 import datetime
 import tempfile
 import asyncio
@@ -70,7 +71,7 @@ async def main(zone_filepath, daemon=False):
                 tmp.write(f"{left} IN CNAME {target}\n")
             tmp.write("\n")
     try:
-        os.replace(tmp.name, zone_filepath)
+        shutil.move(tmp.name, zone_filepath)
     except:
         os.remove(tmp.name)
         raise
