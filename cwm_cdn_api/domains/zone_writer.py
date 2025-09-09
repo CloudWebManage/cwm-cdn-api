@@ -71,11 +71,11 @@ async def main(zone_filepath, daemon=False):
                 tmp.write(f"{left} IN CNAME {target}\n")
             tmp.write("\n")
     try:
+        os.chmod(tmp.name, 0o755)
         shutil.move(tmp.name, zone_filepath)
     except:
         os.remove(tmp.name)
         raise
-    os.chmod(zone_filepath, 0o755)
     with open(zone_filepath_json, 'w') as f:
         f.write(apex_records_json)
     print(f'Wrote {num_records} records in {num_apex} zones to {zone_filepath}', file=sys.stderr)
