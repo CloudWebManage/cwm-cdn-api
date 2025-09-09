@@ -4,6 +4,7 @@ import shutil
 import datetime
 import tempfile
 import asyncio
+import signal
 
 import orjson
 
@@ -34,8 +35,12 @@ async def main_daemon(zones_dir):
     print(f'Starting zone writer daemon, writing to {zones_dir}', file=sys.stderr)
     os.makedirs(zones_dir, exist_ok=True)
     os.chmod(zones_dir, 0o755)
+    stop = asyncio.Event()
+    asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, stop.set)
     while True:
         await main(zones_dir, daemon=False)
+        if stop.is_set():
+            break
         await asyncio.sleep(1)
 
 
