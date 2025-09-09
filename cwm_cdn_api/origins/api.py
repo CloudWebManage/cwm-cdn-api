@@ -1,8 +1,11 @@
 from .. import db
+from ..tenants import api as tenants_api
 
 
 async def create(tenant_id, origin_url):
     async with db.connection_cursor() as (conn, cur):
+        if not await tenants_api.get(tenant_id):
+            raise Exception('Tenant not found')
         if await get(tenant_id, origin_url, cur=cur) is not None:
             raise Exception('Origin already exists')
         await cur.execute(
