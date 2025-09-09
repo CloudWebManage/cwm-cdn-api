@@ -32,6 +32,7 @@ def _zone_header(apex, serial):
 
 async def main_daemon(zones_dir):
     print(f'Starting zone writer daemon, writing to {zones_dir}', file=sys.stderr)
+    os.makedirs(zones_dir, exist_ok=True)
     while True:
         await main(zones_dir, daemon=False)
         await asyncio.sleep(1)
