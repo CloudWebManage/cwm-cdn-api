@@ -75,6 +75,7 @@ async def main(zone_filepath, daemon=False):
     except:
         os.remove(tmp.name)
         raise
+    os.chmod(zone_filepath, 0o755)
     with open(zone_filepath_json, 'w') as f:
         f.write(apex_records_json)
     print(f'Wrote {num_records} records in {num_apex} zones to {zone_filepath}', file=sys.stderr)
