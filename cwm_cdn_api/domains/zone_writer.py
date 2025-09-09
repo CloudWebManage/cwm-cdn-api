@@ -30,16 +30,16 @@ def _zone_header(apex, serial):
     )
 
 
-async def main_daemon(zone_filepath):
-    print('Starting zone writer daemon', file=sys.stderr)
+async def main_daemon(zones_dir):
+    print(f'Starting zone writer daemon, writing to {zones_dir}', file=sys.stderr)
     while True:
-        await main(zone_filepath, daemon=False)
+        await main(zones_dir, daemon=False)
         await asyncio.sleep(1)
 
 
-async def main(zone_filepath, daemon=False):
+async def main(zones_dir, daemon=False):
     if daemon:
-        await main_daemon(zone_filepath)
+        await main_daemon(zones_dir)
         return
     apex_records = {}
     async with db.connection_cursor() as (conn, cur):
@@ -52,7 +52,7 @@ async def main(zone_filepath, daemon=False):
             domain_without_apex = domain[:-len(apex)].rstrip(".")
             apex_records[apex][domain_without_apex] = row['tenant_id']
     apex_records_json = orjson.dumps(apex_records, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS).decode().strip()
-    zone_filepath_json = f'{zone_filepath}.json'
+    zone_filepath_json = f'{zones_dir}.json'
     if os.path.exists(zone_filepath_json):
         with open(zone_filepath_json, 'r') as f:
             if f.read().strip() == apex_records_json:
@@ -60,9 +60,10 @@ async def main(zone_filepath, daemon=False):
     num_apex = 0
     num_records = 0
     serial = _serial()
-    with tempfile.NamedTemporaryFile('w', delete=False) as tmp:
-        for apex, records in apex_records.items():
-            num_apex += 1
+    db_files = set([d for d in os.listdir(zones_dir) if d.endswith('.db')])
+    for apex, records in apex_records.items():
+        num_apex += 1
+        with tempfile.NamedTemporaryFile('w', delete=False) as tmp:
             tmp.write(_zone_header(apex, serial))
             for domain_without_apex, tenant_id in records.items():
                 num_records += 1
@@ -70,12 +71,17 @@ async def main(zone_filepath, daemon=False):
                 target = f"front.{tenant_id}.svc.cluster.local."
                 tmp.write(f"{left} IN CNAME {target}\n")
             tmp.write("\n")
-    try:
-        os.chmod(tmp.name, 0o755)
-        shutil.move(tmp.name, zone_filepath)
-    except:
-        os.remove(tmp.name)
-        raise
+        try:
+            os.chmod(tmp.name, 0o755)
+            shutil.move(tmp.name, f'{zones_dir}/{apex}.db')
+            if f'{apex}.db' in db_files:
+                db_files.remove(f'{apex}.db')
+        except:
+            os.remove(tmp.name)
+            raise
+    for old_db in db_files:
+        if os.path.exists(f'{zones_dir}/{old_db}'):
+            os.remove(f'{zones_dir}/{old_db}')
     with open(zone_filepath_json, 'w') as f:
         f.write(apex_records_json)
-    print(f'Wrote {num_records} records in {num_apex} zones to {zone_filepath}', file=sys.stderr)
+    print(f'Wrote {num_records} records in {num_apex} zones to {zones_dir}', file=sys.stderr)

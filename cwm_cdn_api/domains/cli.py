@@ -39,8 +39,8 @@ async def list_(tenant_id):
 
 
 @main.command()
-@click.argument('zone_file')
+@click.argument('zones_dir')
 @click.option('--daemon', is_flag=True)
-async def zone_writer(zone_file, daemon):
+async def zone_writer(zones_dir, daemon):
     from . import zone_writer
-    await zone_writer.main(zone_file, daemon)
+    await zone_writer.main(zones_dir, daemon)
