@@ -59,7 +59,10 @@ async def iterate_tenant_domains():
 
 
 async def main(zones_dir, daemon=False):
+    zone_filepath_json = f'{zones_dir}.json'
     if daemon:
+        if os.path.exists(zone_filepath_json):
+            os.remove(zone_filepath_json)
         await main_daemon(zones_dir)
         return
     apex_records = {}
@@ -71,7 +74,6 @@ async def main(zones_dir, daemon=False):
             domain_without_apex = domain[:-len(apex)].rstrip(".")
             apex_records[apex][domain_without_apex] = tenant_name
     apex_records_json = orjson.dumps(apex_records, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS).decode().strip()
-    zone_filepath_json = f'{zones_dir}.json'
     if os.path.exists(zone_filepath_json):
         with open(zone_filepath_json, 'r') as f:
             if f.read().strip() == apex_records_json:
