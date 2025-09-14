@@ -16,7 +16,7 @@ server {
     listen       80;
     server_name  _;
     location / {
-        proxy_pass http://cache;
+        proxy_pass http://cache$request_uri;
     }
 }
 '''
@@ -29,7 +29,7 @@ server {
     listen       80;
     server_name  _;
     location / {
-        proxy_pass http://tenant.$http_x_cwmcdn_tenant_name;
+        proxy_pass http://tenant.$http_x_cwmcdn_tenant_name.svc.cluster.local$request_uri;
     }
 }
 '''
