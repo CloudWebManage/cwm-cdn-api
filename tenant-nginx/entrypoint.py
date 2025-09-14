@@ -15,7 +15,7 @@ server {
     ssl_certificate /certs/tls.crt;
     ssl_certificate_key /certs/tls.key;
     location / {
-        proxy_pass http://origin;
+        proxy_pass http://tenant.__TENANT_NAME__;
         proxy_set_header X-CWMCDN-Tenant-Name __TENANT_NAME__;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
