@@ -1,7 +1,7 @@
 {
   "origins": [
     {
-      "url": "http://example.com"
+      "url": "http://httpbin.org"
     }
   ],
   "domains": [

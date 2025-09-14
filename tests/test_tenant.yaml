@@ -1,5 +1,5 @@
 origins:
-  - url: http://example.com
+  - url: http://httpbin.org
 domains:
   - name: test.example.com
     # self-signed certificate for testing purposes only
