@@ -22,6 +22,9 @@ server {
 '''
 
 DEFAULT_CONF_CACHE_TEMPLATE = '''
+resolver 169.254.20.10 valid=30s;
+resolver_timeout 5s;
+
 server {
     listen       80;
     server_name  _;
