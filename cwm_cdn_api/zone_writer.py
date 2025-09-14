@@ -87,7 +87,7 @@ async def main(zones_dir, daemon=False):
             for domain_without_apex, tenant_id in records.items():
                 num_records += 1
                 left = '@' if not domain_without_apex else domain_without_apex
-                target = f"front.{tenant_id}.svc.cluster.local."
+                target = f"tenant.{tenant_id}.svc.cluster.local."
                 tmp.write(f"{left} IN CNAME {target}\n")
             tmp.write("\n")
         try:
