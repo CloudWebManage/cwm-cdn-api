@@ -1,10 +1,10 @@
 import sys
 import logging
-import importlib
 
+import orjson
 import asyncclick as click
 
-from . import config
+from . import config, common
 
 
 logging.basicConfig(
@@ -18,12 +18,44 @@ async def main():
     pass
 
 
-for submodule in [
-    'tenants',
-    'domains',
-    'origins',
-]:
-    main.add_command(getattr(importlib.import_module(f'.{submodule}.cli', __package__), 'main'), name=submodule.replace('_', '-'))
+@main.command()
+@click.argument('cdn_tenant_name')
+@click.argument('cdn_tenant_spec_json')
+async def apply(cdn_tenant_name, cdn_tenant_spec_json):
+    from . import api
+    common.json_print(await api.apply(cdn_tenant_name, orjson.loads(cdn_tenant_spec_json)))
+
+
+@main.command()
+@click.argument('cdn_tenant_name')
+async def delete(cdn_tenant_name):
+    from . import api
+    common.json_print(await api.delete(cdn_tenant_name))
+
+
+@main.command()
+@click.argument('cdn_tenant_name')
+async def get(cdn_tenant_name):
+    from . import api
+    from . import common
+    common.json_print(await api.get(cdn_tenant_name))
+
+
+@main.command(name='list')
+async def list_():
+    from . import api
+    num_tenants = 0
+    async for tenant_name in api.list_iterator():
+        print(tenant_name)
+        num_tenants += 1
+    print(f'Total CDN tenants: {num_tenants}', file=sys.stderr)
+
+
+@main.command()
+async def reserved_names():
+    from . import api
+    async for name in api.reserved_names_iterator():
+        print(name)
 
 
 if __name__ == '__main__':

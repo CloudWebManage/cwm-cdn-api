@@ -1,6 +1,5 @@
-import asyncio
-
 import orjson
+import asyncio
 
 
 def json_print(data):

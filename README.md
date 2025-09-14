@@ -19,8 +19,8 @@ Prerequisites:
 
 * Python 3.12
 * [uv](https://pypi.org/project/uv/)
-* [Migrate](https://github.com/golang-migrate/migrate/tree/master/cmd/migrate#installation)
 * Docker
+* kubectl connected to a Kubernetes cluster with cwm-cdn-operator and related CRDs installed
 
 Install:
 
@@ -29,12 +29,6 @@ uv sync
 ```
 
 Set configuration values in `.env` file (See Configuration section above for details)
-
-Start the DB:
-
-```
-docker compose up -d db
-```
 
 Run the CLI:
 
@@ -45,28 +39,7 @@ uv run cwm-minio-api --help
 Run the web app:
 
 ```
-uv run uvicorn cwm_minio_api.app:app --reload --factory
+uv run uvicorn cwm_cdn_api.app:app --reload --factory
 ```
 
 Access the API Docs at http://localhost:8000/docs
-
-
-## DB Migrations
-
-Apply all migrations:
-
-```
-bin/migrate.sh up
-```
-
-Create a new migration:
-
-```
-bin/migrate_create.sh descriptive_migration_name
-```
-
-Migrations management:
-
-```
-bin/migrate.sh --help
-```
