@@ -5,7 +5,7 @@ on:
       - main
     paths-ignore:
       - .github/workflows/nginx-ci.yaml
-      - tenant-nginx
+      - tenant-nginx/**
       - .github/workflows/cache-nginx-ci.yaml
       - cache-nginx/**
 env:
