@@ -4,7 +4,8 @@ import tempfile
 
 import orjson
 
-from .common import async_subprocess_check_call, async_subprocess_check_output, async_subprocess_status_output
+from .common import async_subprocess_check_output, async_subprocess_status_output
+from .config import NAMESPACE
 
 
 async def reserved_names_iterator():
@@ -29,7 +30,7 @@ async def apply(name, spec):
         'kind': 'CdnTenant',
         'metadata': {
             'name': name,
-            'namespace': 'default',
+            'namespace': NAMESPACE,
         },
         'spec': spec,
     }
@@ -45,7 +46,7 @@ async def apply(name, spec):
 
 async def delete(name):
     status, output = await async_subprocess_status_output(
-        'kubectl', 'delete', 'cdntenant.cdn.cloudwm-cdn.com', name, '-n', 'default',
+        'kubectl', 'delete', 'cdntenant.cdn.cloudwm-cdn.com', name, '-n', NAMESPACE,
         stderr=subprocess.STDOUT
     )
     return (status == 0), output
@@ -53,7 +54,7 @@ async def delete(name):
 
 async def get(name):
     status, output = await async_subprocess_status_output(
-        'kubectl', 'get', 'cdntenant.cdn.cloudwm-cdn.com', name, '-n', 'default', '-o', 'json',
+        'kubectl', 'get', 'cdntenant.cdn.cloudwm-cdn.com', name, '-n', NAMESPACE, '-o', 'json',
         stderr=subprocess.STDOUT
     )
     if status == 0:
@@ -72,7 +73,7 @@ async def get(name):
 
 async def list_iterator():
     status, output = await async_subprocess_status_output(
-        'kubectl', 'get', 'cdntenant.cdn.cloudwm-cdn.com', '-oname',
+        'kubectl', 'get', 'cdntenant.cdn.cloudwm-cdn.com', '-oname', '-n', NAMESPACE,
         stderr=subprocess.STDOUT
     )
     if status == 0:
