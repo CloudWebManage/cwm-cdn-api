@@ -9,16 +9,17 @@ ORIGIN_URL = os.getenv("ORIGIN_URL")
 
 DEFAULT_CONF_TEMPLATE = '''
 server {
-    listen 443;
+    listen 443 ssl http2;
     server_name  _;
     ssl_certificate /certs/tls.crt;
     ssl_certificate_key /certs/tls.key;
     location / {
         proxy_pass __ORIGIN_URL__;
-        proxy_set_header Host $host;
+        proxy_set_header Host $proxy_host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_ssl_server_name on;
     }
 }
 '''
