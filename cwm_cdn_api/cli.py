@@ -58,5 +58,12 @@ async def reserved_names():
         print(name)
 
 
+@main.command()
+@click.argument('zones_dir')
+async def start_zone_writer(zones_dir):
+    from . import zone_writer
+    await zone_writer.main(zones_dir, daemon=True)
+
+
 if __name__ == '__main__':
     main()
