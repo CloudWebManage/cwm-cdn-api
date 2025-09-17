@@ -5,7 +5,7 @@ import os
 TYPE = os.environ.get("TYPE", "router")  # router or cache
 assert TYPE in ["router", "cache"]
 if TYPE == "cache":
-    NGINX_HTTP_CONFIGS = os.environ.get("NGINX_HTTP_CONFIGS", "proxy_cache_path /var/cache levels=1:2:3 keys_zone=cwm:1g inactive=5d use_temp_path=off;")
+    NGINX_HTTP_CONFIGS = os.environ.get("NGINX_HTTP_CONFIGS", "proxy_cache_path /var/cache levels=1:2 keys_zone=cwm:1g inactive=5d use_temp_path=off;")
 else:
     NGINX_HTTP_CONFIGS = os.environ.get("NGINX_HTTP_CONFIGS", "")
 NGINX_UPSTREAM_CACHE_SERVERS = os.environ.get("NGINX_UPSTREAM_CACHE_SERVERS", "")
