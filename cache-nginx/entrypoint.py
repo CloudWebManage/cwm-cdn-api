@@ -8,12 +8,13 @@ if TYPE == "cache":
     NGINX_HTTP_CONFIGS = os.environ.get("NGINX_HTTP_CONFIGS", "proxy_cache_path /var/cache levels=1:2:3 keys_zone=cwm:1g inactive=5d use_temp_path=off;")
 else:
     NGINX_HTTP_CONFIGS = os.environ.get("NGINX_HTTP_CONFIGS", "")
+NGINX_UPSTREAM_CACHE_SERVERS = os.environ.get("NGINX_UPSTREAM_CACHE_SERVERS", "")
 
 
 DEFAULT_CONF_ROUTER_TEMPLATE = '''
 upstream cache {
   hash $http_x_cwmcdn_tenant_name$request_uri consistent;
-__SERVERS__
+__NGINX_UPSTREAM_CACHE_SERVERS__
 }
 
 __NGINX_HTTP_CONFIGS__
@@ -49,10 +50,7 @@ def main():
     default_conf = DEFAULT_CONF_ROUTER_TEMPLATE
     default_conf = default_conf.replace("__NGINX_HTTP_CONFIGS__", NGINX_HTTP_CONFIGS)
     if TYPE == "router":
-        servers_conf = []
-        for i in range(1, NUM_CACHE_SERVERS + 1):
-            servers_conf.append(f'  server cache{i}:80;')
-        default_conf = default_conf.replace("__SERVERS__", "\n".join(servers_conf))
+        default_conf = default_conf.replace("__NGINX_UPSTREAM_CACHE_SERVERS__", NGINX_UPSTREAM_CACHE_SERVERS)
     elif TYPE == "cache":
         pass
     else:
