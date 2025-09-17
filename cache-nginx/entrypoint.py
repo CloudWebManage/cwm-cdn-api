@@ -3,7 +3,7 @@ import os
 
 
 TYPE = os.environ.get("TYPE", "router")  # router or cache
-NUM_CACHE_SERVERS = int(os.environ.get("NUM_CACHE_SERVERS", "3"))
+assert TYPE in ["router", "cache"]
 if TYPE == "cache":
     NGINX_HTTP_CONFIGS = os.environ.get("NGINX_HTTP_CONFIGS", "proxy_cache_path /var/cache levels=1:2:3 keys_zone=cwm:1g inactive=5d use_temp_path=off;")
 else:
@@ -45,16 +45,10 @@ server {
 
 
 def main():
-    if not TYPE or not NUM_CACHE_SERVERS:
-        raise Exception("TYPE, NUM_CACHE_SERVERS environment variables must be set")
-    default_conf = DEFAULT_CONF_ROUTER_TEMPLATE
+    default_conf = DEFAULT_CONF_ROUTER_TEMPLATE if TYPE == "router" else DEFAULT_CONF_CACHE_TEMPLATE
     default_conf = default_conf.replace("__NGINX_HTTP_CONFIGS__", NGINX_HTTP_CONFIGS)
     if TYPE == "router":
         default_conf = default_conf.replace("__NGINX_UPSTREAM_CACHE_SERVERS__", NGINX_UPSTREAM_CACHE_SERVERS)
-    elif TYPE == "cache":
-        pass
-    else:
-        raise Exception("TYPE must be 'router' or 'cache'")
     with open("/etc/nginx/conf.d/default.conf", "w") as f:
         f.write(default_conf)
 
