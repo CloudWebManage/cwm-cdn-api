@@ -51,7 +51,7 @@ async def delete(name, primary_key=""):
     if not IS_PRIMARY and primary_key != ALLOWED_PRIMARY_KEY:
         return False, 'Deletes are not allowed on this instance'
     status, output = await async_subprocess_status_output(
-        'kubectl', 'delete', 'cdntenant.cdn.cloudwm-cdn.com', name, '-n', NAMESPACE,
+        'kubectl', 'delete', 'cdntenant.cdn.cloudwm-cdn.com', name, '-n', NAMESPACE, '--wait=false',
         stderr=subprocess.STDOUT
     )
     return (status == 0), output
