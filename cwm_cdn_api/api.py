@@ -5,7 +5,7 @@ import tempfile
 import orjson
 
 from .common import async_subprocess_check_output, async_subprocess_status_output
-from .config import NAMESPACE
+from .config import NAMESPACE, ALLOWED_PRIMARY_KEY, IS_PRIMARY
 
 
 async def reserved_names_iterator():
@@ -25,6 +25,9 @@ async def validate_name(name):
 
 async def apply(name, spec):
     await validate_name(name)
+    primary_key = spec.pop("primaryKey", "")
+    if not IS_PRIMARY and primary_key != ALLOWED_PRIMARY_KEY:
+        return False, 'Updates are not allowed on this instance'
     o = {
         'apiVersion': 'cdn.cloudwm-cdn.com/v1',
         'kind': 'CdnTenant',
@@ -44,7 +47,9 @@ async def apply(name, spec):
     return (status == 0), output
 
 
-async def delete(name):
+async def delete(name, primary_key=""):
+    if not IS_PRIMARY and primary_key != ALLOWED_PRIMARY_KEY:
+        return False, 'Deletes are not allowed on this instance'
     status, output = await async_subprocess_status_output(
         'kubectl', 'delete', 'cdntenant.cdn.cloudwm-cdn.com', name, '-n', NAMESPACE,
         stderr=subprocess.STDOUT

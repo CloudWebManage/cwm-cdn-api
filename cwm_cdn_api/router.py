@@ -44,8 +44,8 @@ async def apply(
 
 
 @router.post("/delete")
-async def delete(cdn_tenant_name: str):
-    success, output = await api.delete(cdn_tenant_name)
+async def delete(cdn_tenant_name: str, primary_key: str = ""):
+    success, output = await api.delete(cdn_tenant_name, primary_key)
     return ORJSONResponse(
         status_code=200 if success else 400,
         content={
@@ -53,6 +53,7 @@ async def delete(cdn_tenant_name: str):
             "msg": output
         }
     )
+
 
 @router.get("/get")
 async def get(cdn_tenant_name: str):
