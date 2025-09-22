@@ -64,5 +64,5 @@ jobs:
               image: "'$IMAGE':'${GITHUB_SHA}'"
           ' > config/auto-updated/cwm-cdn-api/api.yaml
           git add config/auto-updated/cwm-cdn-api/api.yaml
-          git commit -m "Update cwm-cdn-api"
+          git commit -m "Update cwm-cdn-api/api"
           git push origin main
