@@ -4,7 +4,7 @@ on:
     branches:
       - main
     paths:
-      - .github/workflows/nginx-ci.yaml
+      - .github/workflows/tenant-nginx-ci.yaml
       - tenant-nginx/**
       - tests/test_tenant_nginx*
 env:

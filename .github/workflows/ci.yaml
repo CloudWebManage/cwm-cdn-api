@@ -4,7 +4,7 @@ on:
     branches:
       - main
     paths-ignore:
-      - .github/workflows/nginx-ci.yaml
+      - .github/workflows/tenant-nginx-ci.yaml
       - tenant-nginx/**
       - tests/test_tenant_nginx*
       - .github/workflows/cache-nginx-ci.yaml
