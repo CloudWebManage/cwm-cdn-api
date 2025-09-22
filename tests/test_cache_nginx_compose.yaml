@@ -1,0 +1,82 @@
+name: cwm-cdn-api-test-cache-nginx
+services:
+  router:
+    depends_on: [cache1,cache2,cache3]
+    restart: unless-stopped
+    build: ../cache-nginx
+    ports:
+      - "48180:80"
+    environment:
+      TYPE: "router"
+      NGINX_UPSTREAM_CACHE_SERVERS: |
+        server cache1:80;
+        server cache2:80;
+        server cache3:80;
+
+  cache1:
+    depends_on: [tenant1,tenant2,tenant3,tenant4]
+    restart: unless-stopped
+    build: ../cache-nginx
+    environment:
+      TYPE: "cache"
+      TENANT_PROXY_PASS_DOMAIN: "$$http_x_cwmcdn_tenant_name:80"
+      NGINX_RESOLVER_CONFIG: |
+        resolver 127.0.0.11 ipv6=off;
+      NGINX_LOCATION_CONFIGS: |
+        add_header X-CWMCDN-Cache-Server cache1;
+
+  cache2:
+    depends_on: [tenant1,tenant2,tenant3,tenant4]
+    restart: unless-stopped
+    build: ../cache-nginx
+    environment:
+      TYPE: "cache"
+      TENANT_PROXY_PASS_DOMAIN: "$$http_x_cwmcdn_tenant_name:80"
+      NGINX_RESOLVER_CONFIG: |
+        resolver 127.0.0.11 ipv6=off;
+      NGINX_LOCATION_CONFIGS: |
+        add_header X-CWMCDN-Cache-Server cache2;
+
+  cache3:
+    depends_on: [tenant1,tenant2,tenant3,tenant4]
+    restart: unless-stopped
+    build: ../cache-nginx
+    environment:
+      TYPE: "cache"
+      TENANT_PROXY_PASS_DOMAIN: "$$http_x_cwmcdn_tenant_name:80"
+      NGINX_RESOLVER_CONFIG: |
+        resolver 127.0.0.11 ipv6=off;
+      NGINX_LOCATION_CONFIGS: |
+        add_header X-CWMCDN-Cache-Server cache3;
+
+  tenant1:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: nginx.Dockerfile
+    environment:
+      CONTENT: "tenant1"
+
+  tenant2:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: nginx.Dockerfile
+    environment:
+      CONTENT: "tenant2"
+
+  tenant3:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: nginx.Dockerfile
+    environment:
+      CONTENT: "tenant3"
+
+  tenant4:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: nginx.Dockerfile
+    environment:
+      CONTENT: "tenant4"

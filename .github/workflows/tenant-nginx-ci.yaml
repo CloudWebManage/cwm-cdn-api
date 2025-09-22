@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/nginx-ci.yaml
       - tenant-nginx/**
+      - tests/test_tenant_nginx*
 env:
   IMAGE: ghcr.io/cloudwebmanage/cwm-cdn-api-tenant-nginx
 jobs:
@@ -13,6 +14,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+      - run: |
+          pip install pytest==8.4.2 &&\
+          E2E=yes pytest tests/test_tenant_nginx.py
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io

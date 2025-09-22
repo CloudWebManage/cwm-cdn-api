@@ -1,0 +1,29 @@
+name: cwm-cdn-api-test-tenant-nginx
+services:
+  cache-router:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: nginx.Dockerfile
+    environment:
+      CONTENT: "cache-router"
+
+  origin:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: nginx.Dockerfile
+    environment:
+      CONTENT: "origin"
+
+  tenant-nginx:
+    depends_on:
+      - cache-router
+      - origin
+    restart: unless-stopped
+    build: ../tenant-nginx
+    ports:
+      - "48080:80"
+      - "48443:443"
+    env_file:
+      - test_tenant_nginx.env

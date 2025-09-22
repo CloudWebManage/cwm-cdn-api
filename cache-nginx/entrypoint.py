@@ -2,12 +2,11 @@
 import os
 
 
-TYPE = os.environ.get("TYPE", "router")  # router or cache
-NGINX_UPSTREAM_CACHE_SERVERS = os.environ.get("NGINX_UPSTREAM_CACHE_SERVERS", "")
-NGINX_HTTP_CONFIGS = os.environ.get("NGINX_HTTP_CONFIGS", "")
-NGINX_SERVER_CONFIGS = os.environ.get("NGINX_SERVER_CONFIGS", "")
-NGINX_LOCATION_CONFIGS = os.environ.get("NGINX_LOCATION_CONFIGS", "")
-
+DEFAULT_TENANT_PROXY_PASS_DOMAIN = 'tenant.$http_x_cwmcdn_tenant_name.svc.cluster.local'
+DEFAULT_NGINX_RESOLVER_CONFIG = '''
+resolver 169.254.20.10 valid=30s;
+resolver_timeout 5s;
+'''
 
 DEFAULT_CONF_ROUTER_TEMPLATE = '''
 upstream cache {
@@ -29,8 +28,7 @@ server {
 '''
 
 DEFAULT_CONF_CACHE_TEMPLATE = '''
-resolver 169.254.20.10 valid=30s;
-resolver_timeout 5s;
+__NGINX_RESOLVER_CONFIG__
 
 __NGINX_HTTP_CONFIGS__
 
@@ -39,22 +37,55 @@ server {
     server_name  _;
     __NGINX_SERVER_CONFIGS__
     location / {
-        proxy_pass http://tenant.$http_x_cwmcdn_tenant_name.svc.cluster.local$request_uri;
+        proxy_pass http://__TENANT_PROXY_PASS_DOMAIN__$request_uri;
         __NGINX_LOCATION_CONFIGS__
     }
 }
 '''
 
 
-def main():
-    default_conf = DEFAULT_CONF_ROUTER_TEMPLATE if TYPE == "router" else DEFAULT_CONF_CACHE_TEMPLATE
-    default_conf = default_conf.replace("__NGINX_HTTP_CONFIGS__", NGINX_HTTP_CONFIGS)
-    default_conf = default_conf.replace("__NGINX_SERVER_CONFIGS__", NGINX_SERVER_CONFIGS)
-    default_conf = default_conf.replace("__NGINX_LOCATION_CONFIGS__", NGINX_LOCATION_CONFIGS)
-    if TYPE == "router":
-        default_conf = default_conf.replace("__NGINX_UPSTREAM_CACHE_SERVERS__", NGINX_UPSTREAM_CACHE_SERVERS)
-    with open("/etc/nginx/conf.d/default.conf", "w") as f:
-        f.write(default_conf)
+def replace_keys(base, d):
+    out = base
+    for k, v in d.items():
+        out = out.replace(k, v)
+    return out
+
+
+def get_common_replace_keys(env):
+    return {
+        "__NGINX_HTTP_CONFIGS__": env.get('NGINX_HTTP_CONFIGS') or "",
+        "__NGINX_SERVER_CONFIGS__": env.get('NGINX_SERVER_CONFIGS') or "",
+        "__NGINX_LOCATION_CONFIGS__": env.get('NGINX_LOCATION_CONFIGS') or "",
+    }
+
+
+def get_router_default_conf(env):
+    return replace_keys(DEFAULT_CONF_ROUTER_TEMPLATE, {
+        **get_common_replace_keys(env),
+        "__NGINX_UPSTREAM_CACHE_SERVERS__": env['NGINX_UPSTREAM_CACHE_SERVERS']
+    })
+
+
+def get_cache_default_conf(env):
+    return replace_keys(DEFAULT_CONF_CACHE_TEMPLATE, {
+        **get_common_replace_keys(env),
+        "__NGINX_RESOLVER_CONFIG__": env.get('NGINX_RESOLVER_CONFIG') or DEFAULT_NGINX_RESOLVER_CONFIG,
+        "__TENANT_PROXY_PASS_DOMAIN__": env.get('TENANT_PROXY_PASS_DOMAIN') or DEFAULT_TENANT_PROXY_PASS_DOMAIN,
+    })
+
+
+def get_default_conf(env):
+    if env['TYPE'] == 'router':
+        return get_router_default_conf(env)
+    elif env['TYPE'] == 'cache':
+        return get_cache_default_conf(env)
+    else:
+        raise Exception(f'Unknown TYPE: {env["TYPE"]}')
+
+
+def main(nginx_conf_path="/etc/nginx", env=None):
+    with open(os.path.join(nginx_conf_path, "conf.d/default.conf"), "w") as f:
+        f.write(get_default_conf(env or os.environ))
 
 
 if __name__ == "__main__":

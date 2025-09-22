@@ -6,29 +6,30 @@ on:
     paths-ignore:
       - .github/workflows/nginx-ci.yaml
       - tenant-nginx/**
+      - tests/test_tenant_nginx*
       - .github/workflows/cache-nginx-ci.yaml
       - cache-nginx/**
+      - tests/test_cache_nginx*
 env:
   IMAGE: ghcr.io/cloudwebmanage/cwm-cdn-api
-  # these should match the versions in Dockerfile
-#  UV_VERSION: 0.8.8
+  # should match the versions in Dockerfile
+  UV_VERSION: 0.8.8
 jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-#      - uses: actions/setup-python@v5
-#        with:
-#          python-version: '3.12'
-#      - uses: astral-sh/setup-uv@v6
-#        with:
-#          enable-cache: true
-#          version: ${{ env.UV_VERSION }}
-#      - name: run tests
-#        run: |
-#          docker compose up -d db
-#          uv sync
-#          uv run pytest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          version: ${{ env.UV_VERSION }}
+      - name: run tests
+        run: |
+          uv sync
+          E2E=yes uv run pytest
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
