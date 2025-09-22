@@ -1,4 +1,5 @@
 import os
+import time
 import subprocess
 from glob import glob
 
@@ -286,6 +287,7 @@ def test_e2e():
             "docker", "compose", "-f", "test_tenant_nginx_compose.yaml",
             "up", "--wait", "--yes", "--build", "--force-recreate", "--remove-orphans",
         ], cwd=os.path.join(os.path.dirname(__file__)))
+        time.sleep(5)
         assert_curl_issuer("test1.example.com", "cache-router", "test1.example.com")
         assert_curl_issuer("test2.aaa.bbb", "cache-router", "test2.aaa.bbb")
         assert subprocess.getstatusoutput("curl -s http://localhost:48080") == (0, "origin")

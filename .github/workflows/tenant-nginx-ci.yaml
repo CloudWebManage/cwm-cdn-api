@@ -9,17 +9,24 @@ on:
       - tests/test_tenant_nginx*
 env:
   IMAGE: ghcr.io/cloudwebmanage/cwm-cdn-api-tenant-nginx
+  # should match the versions in Dockerfile
+  UV_VERSION: 0.8.8
 jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: 3.12
-      - run: |
-          pip install pytest==8.4.2 &&\
-          E2E=yes pytest tests/test_tenant_nginx.py
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          version: ${{ env.UV_VERSION }}
+      - name: run tests
+        run: |
+          uv sync
+          E2E=yes uv run pytest tests/test_tenant_nginx.py
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io

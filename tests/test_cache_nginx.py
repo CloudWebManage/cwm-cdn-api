@@ -1,4 +1,5 @@
 import os
+import time
 import subprocess
 
 import pytest
@@ -78,6 +79,7 @@ def test_e2e():
             "docker", "compose", "-f", "test_cache_nginx_compose.yaml",
             "up", "--wait", "--yes", "--build", "--force-recreate", "--remove-orphans",
         ], cwd=os.path.join(os.path.dirname(__file__)))
+        time.sleep(5)
         assert_curl_cache_server("tenant1", "tenant1", "cache3")
         assert_curl_cache_server("tenant2", "tenant2", "cache3")
         assert_curl_cache_server("tenant3", "tenant3", "cache1")
