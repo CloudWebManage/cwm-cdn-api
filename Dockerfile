@@ -1,5 +1,4 @@
 ARG PYTHON_VERSION=3.12
-
 FROM python:${PYTHON_VERSION} AS build
 ARG UV_VERSION=0.8.8
 RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
