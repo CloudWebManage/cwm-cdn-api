@@ -1,14 +1,11 @@
 name: Cache Nginx CI
 on:
   push:
-    branches:
-      - main
     paths:
       - .github/workflows/cache-nginx-ci.yaml
       - cache-nginx/**
       - tests/test_cache_nginx*
 env:
-  IMAGE: ghcr.io/cloudwebmanage/cwm-cdn-api-cache-nginx
   UV_VERSION: 0.8.8
   PYTHON_VERSION: "3.12"
 jobs:
