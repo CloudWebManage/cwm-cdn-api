@@ -26,6 +26,7 @@ jobs:
             uv sync
             E2E=yes uv run pytest tests/test_tenant_nginx.py
           image_suffix: cwm-cdn-api-tenant-nginx
+          context: tenant-nginx
           deploy_key_b64: ${{ secrets.CWM_WORKER_CLUSTER_DEPLOY_KEY_B64 }}
           deploy_file_path: config/auto-updated/cwm-cdn-api/tenant-nginx.yaml
           deploy_content_template: |
