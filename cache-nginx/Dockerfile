@@ -1,3 +1,2 @@
-FROM nginx:alpine@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8
-RUN apk update && apk add python3
-COPY entrypoint.py /docker-entrypoint.d/999-cache-nginx-py.sh
+FROM ghcr.io/cloudwebmanage/cwm-iac-openresty:08370351309932e3feba7de76114b9fb416b114d
+COPY entrypoint.py /docker-entrypoint.d/999-cache-nginx.py
