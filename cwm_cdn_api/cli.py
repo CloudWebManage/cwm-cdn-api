@@ -65,5 +65,11 @@ async def start_zone_writer(zones_dir):
     await zone_writer.main(zones_dir, daemon=True)
 
 
+@main.command()
+async def components_status():
+    from . import api
+    common.json_print(await api.components_status())
+
+
 if __name__ == '__main__':
     main()

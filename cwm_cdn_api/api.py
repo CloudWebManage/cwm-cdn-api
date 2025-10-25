@@ -1,6 +1,7 @@
 import os
 import subprocess
 import tempfile
+import datetime
 
 import orjson
 
@@ -87,3 +88,36 @@ async def list_iterator():
                 yield name.split('/', 1)[1]
     else:
         raise Exception(output)
+
+
+def parse_pod_status(pod):
+    creation_timestamp = pod['metadata']['creationTimestamp']
+    image = pod['spec']['containers'][0]['image']
+    image_tag = image.split(':')[-1] if ':' in image else 'latest'
+    status_phase = pod['status']['phase']
+    return {
+        'creation_timestamp': creation_timestamp,
+        'image_tag': image_tag,
+        'status_phase': status_phase,
+    }
+
+
+async def components_status():
+    res = {
+        'cache': {},
+        'edge': {},
+        'operator': [],
+    }
+    for pod in orjson.loads(await async_subprocess_check_output(
+        'kubectl', '-n', 'cdn-cache', 'get', 'pods', '-o', 'json'
+    ))['items']:
+        res['cache'].setdefault(pod['metadata']['name'].split('-')[0], []).append(parse_pod_status(pod))
+    for pod in orjson.loads(await async_subprocess_check_output(
+        'kubectl', '-n', 'cdn-edge', 'get', 'pods', '-o', 'json'
+    ))['items']:
+        res['edge'].setdefault(pod['metadata']['name'].split('-')[2], []).append(parse_pod_status(pod))
+    for pod in orjson.loads(await async_subprocess_check_output(
+        'kubectl', '-n', 'cwm-cdn-operator-system', 'get', 'pods', '-o', 'json'
+    ))['items']:
+        res['operator'].append(parse_pod_status(pod))
+    return res

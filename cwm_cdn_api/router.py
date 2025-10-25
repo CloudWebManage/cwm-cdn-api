@@ -76,3 +76,8 @@ async def list_tenants():
 @router.get('/reserved-names')
 async def reserved_names():
     return [name async for name in api.reserved_names_iterator()]
+
+
+@router.get('/components-status')
+async def components_status():
+    return await api.components_status()
