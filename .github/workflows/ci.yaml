@@ -42,3 +42,22 @@ jobs:
               api:
                 image: "__IMAGE__"
           deploy_commit_message: "Update cwm-cdn-api/api"
+          wait_for_deployment_json: |
+            {
+              "wait-for": [
+                {
+                  "type": "openapi_version",
+                  "url": "${{ secrets.PRIMARY_API_URL }}",
+                  "username": "${{ secrets.PRIMARY_API_USERNAME }}",
+                  "password": "${{ secrets.PRIMARY_API_PASSWORD }}",
+                  "expected_version": "${{ github.sha }}"
+                },
+                {
+                  "type": "openapi_version",
+                  "url": "${{ secrets.SECONDARY_API_URL }}",
+                  "username": "${{ secrets.SECONDARY_API_USERNAME }}",
+                  "password": "${{ secrets.SECONDARY_API_PASSWORD }}",
+                  "expected_version": "${{ github.sha }}"
+                }
+              ]
+            }
