@@ -24,17 +24,17 @@ jobs:
         with:
           enable-cache: true
           version: ${{ env.UV_VERSION }}
-      - name: run tests
-        run: |
-          uv sync
-          E2E=yes uv run pytest
       - uses: CloudWebManage/cwm-iac/actions/docker-build-push@main
         with:
+          test_script: |
+            uv sync
+            E2E=yes uv run pytest
           image_suffix: cwm-cdn-api
           build_args: |
             PYTHON_VERSION=${{ env.PYTHON_VERSION }}
             UV_VERSION=${{ env.UV_VERSION }}
             KUBECTL_VERSION=${{ env.KUBECTL_VERSION }}
+            VERSION=${{ github.sha }}
           deploy_key_b64: ${{ secrets.CWM_WORKER_CLUSTER_DEPLOY_KEY_B64 }}
           deploy_file_path: config/auto-updated/cwm-cdn-api/api.yaml
           deploy_content_template: |
