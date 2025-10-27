@@ -9,8 +9,6 @@ resolver_timeout 5s;
 '''
 
 DEFAULT_CONF_ROUTER_TEMPLATE = '''
-include /etc/nginx/metrics.conf;
-
 upstream cache {
   hash $http_x_cwmcdn_tenant_name$request_uri consistent;
 __NGINX_UPSTREAM_CACHE_SERVERS__
@@ -30,8 +28,6 @@ server {
 '''
 
 DEFAULT_CONF_CACHE_TEMPLATE = '''
-include /etc/nginx/metrics.conf;
-
 __NGINX_RESOLVER_CONFIG__
 
 __NGINX_HTTP_CONFIGS__
