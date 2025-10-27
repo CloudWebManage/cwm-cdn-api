@@ -227,6 +227,7 @@ def assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path):
             "__LOCATION_NGINX_CONFIG__": "",
             "__SERVER_NGINX_CONFIG__": "",
         }),
+        "include /etc/nginx/metrics.conf;",
     ])
 
 
