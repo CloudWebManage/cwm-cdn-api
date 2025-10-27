@@ -61,3 +61,24 @@ jobs:
                 }
               ]
             }
+      - name: run deployed e2e tests
+        env:
+          PRIMARY_API_URL: ${{ secrets.PRIMARY_API_URL }}
+          PRIMARY_API_USERNAME: ${{ secrets.PRIMARY_API_USERNAME }}
+          PRIMARY_API_PASSWORD: ${{ secrets.PRIMARY_API_PASSWORD }}
+          PRIMARY_EDGE_DOMAIN: ${{ secrets.PRIMARY_EDGE_DOMAIN }}
+          PRIMARY_KUBECONFIG: ${{ secrets.PRIMARY_KUBECONFIG }}
+          SECONDARY_API_URL: ${{ secrets.SECONDARY_API_URL }}
+          SECONDARY_API_USERNAME: ${{ secrets.SECONDARY_API_USERNAME }}
+          SECONDARY_API_PASSWORD: ${{ secrets.SECONDARY_API_PASSWORD }}
+          SECONDARY_EDGE_DOMAIN: ${{ secrets.SECONDARY_EDGE_DOMAIN }}
+          SECONDARY_KUBECONFIG: ${{ secrets.SECONDARY_KUBECONFIG }}
+          HTTPBIN_URL: ${{ secrets.HTTPBIN_URL }}
+          DEPLOYED_E2E: "yes"
+        run: |
+          echo "${PRIMARY_KUBECONFIG}" > /tmp/primary_kubeconfig
+          export PRIMARY_KUBECONFIG=/tmp/primary_kubeconfig
+          echo "${SECONDARY_KUBECONFIG}" > /tmp/secondary_kubeconfig
+          export SECONDARY_KUBECONFIG=/tmp/secondary_kubeconfig
+          uv sync
+          uv run pytest -svvx tests/test_deployed_e2e.py
