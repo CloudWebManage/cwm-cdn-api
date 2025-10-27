@@ -135,6 +135,10 @@ def get_origin_server_config(origin, tenant_name):
     return server_config
 
 
+def get_metrics_server_config():
+    return 'include /etc/nginx/metrics.conf;'
+
+
 def get_default_conf(certs_path, env):
     tenant_name = env["TENANT_NAME"]
     domains, origins = parse_configs(env)
@@ -142,7 +146,8 @@ def get_default_conf(certs_path, env):
     assert len(origins) == 1, "Exactly one origin configuration is required"
     return "\n".join([
         *get_domains_server_configs(domains, certs_path, tenant_name),
-        get_origin_server_config(origins[0], tenant_name)
+        get_origin_server_config(origins[0], tenant_name),
+        get_metrics_server_config()
     ])
 
 
