@@ -6,6 +6,7 @@ import tempfile
 import asyncio
 import signal
 import subprocess
+import random
 
 import orjson
 
@@ -43,7 +44,7 @@ async def main_daemon(zones_dir):
         await main(zones_dir, daemon=False)
         if stop.is_set():
             break
-        await asyncio.sleep(1)
+        await asyncio.sleep(1.1 + random.uniform(0, 0.4))
 
 
 async def iterate_tenant_domains():
