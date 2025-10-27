@@ -1,7 +1,7 @@
 import os
 import sys
 import shutil
-import datetime
+import time
 import tempfile
 import asyncio
 import signal
@@ -14,7 +14,7 @@ from .common import async_subprocess_status_output
 
 
 def _serial():
-    return datetime.datetime.utcnow().strftime("%Y%m%d%H")
+    return str(int(time.time()))
 
 
 def _apex(domain):
