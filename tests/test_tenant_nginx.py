@@ -265,12 +265,13 @@ def test_main(tenant_nginx_entrypoint, tmpdir):
     assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path)
 
 
-def assert_curl_issuer(hostname, expected_output, expected_issuer):
+def assert_curl_issuer(hostname, expected_output, expected_issuer, *args):
     p = subprocess.Popen([
         "curl", "-kv",
         "--resolve", f"{hostname}:48443:127.0.0.1",
         "-H", f"Host: {hostname}",
-        f"https://{hostname}:48443"
+        f"https://{hostname}:48443",
+        *args
     ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     assert p.wait() == 0
     assert p.stdout.read().decode().strip() == expected_output
@@ -291,7 +292,10 @@ def test_e2e():
         time.sleep(5)
         assert_curl_issuer("test1.example.com", "cache-router", "test1.example.com")
         assert_curl_issuer("test2.aaa.bbb", "cache-router", "test2.aaa.bbb")
+        assert_curl_issuer("test1.example.com", "origin", "test1.example.com", "-X", "POST")
+        assert_curl_issuer("test2.aaa.bbb", "origin", "test2.aaa.bbb", "-X", "DELETE")
         assert subprocess.getstatusoutput("curl -s http://localhost:48080") == (0, "origin")
+        assert subprocess.getstatusoutput("curl -s http://localhost:48080 -X POST") == (0, "origin")
     finally:
         subprocess.call([
             "docker", "compose", "-f", "test_tenant_nginx_compose.yaml", "down", "-v"

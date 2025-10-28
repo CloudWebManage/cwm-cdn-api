@@ -19,6 +19,10 @@ server {
         proxy_set_header X-CWMCDN-Tenant-Name __TENANT_NAME__;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         __LOCATION_NGINX_CONFIG__
+        
+        if ($request_method !~ ^(GET|HEAD)$ ) {
+            proxy_pass http://127.0.0.1:80;
+        }
     }
 }
 '''
@@ -28,7 +32,7 @@ ORIGINS_CONF_TEMPLATE = '''
 server {
     listen 80;
     server_name  _;
-    __LOCATION_NGINX_CONFIG__
+    __SERVER_NGINX_CONFIG__
     location / {
         proxy_pass __ORIGIN_URL__;
         proxy_set_header Host __ORIGIN_URL_HOST__;
