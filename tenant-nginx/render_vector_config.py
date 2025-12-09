@@ -31,6 +31,9 @@ def get_es_logs_sink():
     for env_key, conf_key in ENV_CONF_JSON.items():
         if os.environ.get(env_key):
             sink[conf_key] = json.loads(os.environ[env_key])
+    sinkjson = json.dumps(sink)
+    for char in ["{{", "}}", "$"]:
+        assert char not in sinkjson
     return sink
 
 
