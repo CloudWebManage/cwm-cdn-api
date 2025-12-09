@@ -12,7 +12,7 @@ ENV_CONF_STRING = {
     "ES_OPENSEARCH_SERVICE_TYPE": "opensearch_service_type",
 }
 ENV_CONF_JSON = {
-    "ES_AUTH_JSON": "auth",
+    "ES_AUTH": "auth",
     "ES_BULK": "bulk",
     "ES_DATA_STREAM": "data_stream",
     "ES_ENCODING": "encoding",
