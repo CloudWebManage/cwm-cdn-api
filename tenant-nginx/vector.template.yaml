@@ -1,0 +1,17 @@
+sources:
+  nginx_access:
+    type: file
+    data_dir: "__VECTOR_DATA_DIR__"
+    include:
+      - "__NGINX_ACCESS_LOGS_PATH__"
+    ignore_older: 86400
+
+transforms:
+  parse_nginx:
+    type: remap
+    inputs:
+      - nginx_access
+    source: |
+      . = parse_json!(.message)
+
+sinks: __SINKS_JSON__

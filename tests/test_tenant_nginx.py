@@ -1,5 +1,6 @@
 import os
 import time
+import json
 import subprocess
 from glob import glob
 
@@ -99,13 +100,13 @@ def test_get_domain_server_config(tmpdir, tenant_nginx_entrypoint):
     certs_path = tmpdir
     i, domain = 0, {}
     with pytest.raises(AssertionError, match="NAME, CERT and KEY must be set in all domain configurations"):
-        tenant_nginx_entrypoint.get_domain_server_config(i, domain, certs_path, tenant_name)
+        tenant_nginx_entrypoint.get_domain_server_config(i, domain, certs_path, tenant_name, "access_log off;")
     domain = {
         "NAME": "test.example.com",
         "CERT": "cert1",
         "KEY": "key1",
     }
-    server_config = tenant_nginx_entrypoint.get_domain_server_config(i, domain, certs_path, tenant_name)
+    server_config = tenant_nginx_entrypoint.get_domain_server_config(i, domain, certs_path, tenant_name, "access_log off;")
     assert_domain_server_config(i, certs_path, "cert1", "key1")
     assert server_config == tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.DOMAIN_CONF_TEMPLATE, {
         "__SERVER_NAME__": "test.example.com",
@@ -114,11 +115,12 @@ def test_get_domain_server_config(tmpdir, tenant_nginx_entrypoint):
         "__SERVER_NGINX_CONFIG__": "",
         "__LOCATION_NGINX_CONFIG__": "",
         "__CDN_CACHE_ROUTER__": tenant_nginx_entrypoint.CDN_CACHE_ROUTER,
+        "__ACCESS_LOG_CONFIG__": "access_log off;",
     })
     domain["FOO"] = "bar"
     domain["BAR"] = "baz"
     with pytest.raises(AssertionError, match="Unknown domain configuration keys: FOO, BAR"):
-        tenant_nginx_entrypoint.get_domain_server_config(i, domain, certs_path, tenant_name)
+        tenant_nginx_entrypoint.get_domain_server_config(i, domain, certs_path, tenant_name, "access_log off;")
 
 
 def test_get_domains_server_configs(tmpdir, tenant_nginx_entrypoint):
@@ -136,10 +138,11 @@ def test_get_domains_server_configs(tmpdir, tenant_nginx_entrypoint):
             "KEY": "key2",
         },
     ]
-    server_configs = tenant_nginx_entrypoint.get_domains_server_configs(domains, certs_path, tenant_name)
+    server_configs = tenant_nginx_entrypoint.get_domains_server_configs(domains, certs_path, tenant_name, "access_log off;")
     assert_domain_server_config(0, certs_path, "cert1", "key1")
     assert_domain_server_config(1, certs_path, "cert2", "key2")
     assert server_configs == [
+        tenant_nginx_entrypoint.JSON_ESCAPED_LOG_FORMAT,
         tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.DOMAIN_CONF_TEMPLATE, {
             "__SERVER_NAME__": "test1.example.com",
             "__DOMAIN_NUMBER__": "0",
@@ -147,6 +150,7 @@ def test_get_domains_server_configs(tmpdir, tenant_nginx_entrypoint):
             "__SERVER_NGINX_CONFIG__": "",
             "__LOCATION_NGINX_CONFIG__": "",
             "__CDN_CACHE_ROUTER__": tenant_nginx_entrypoint.CDN_CACHE_ROUTER,
+            "__ACCESS_LOG_CONFIG__": "access_log off;",
         }),
         tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.DOMAIN_CONF_TEMPLATE, {
             "__SERVER_NAME__": "test2.example.com",
@@ -155,6 +159,7 @@ def test_get_domains_server_configs(tmpdir, tenant_nginx_entrypoint):
             "__SERVER_NGINX_CONFIG__": "",
             "__LOCATION_NGINX_CONFIG__": "",
             "__CDN_CACHE_ROUTER__": tenant_nginx_entrypoint.CDN_CACHE_ROUTER,
+            "__ACCESS_LOG_CONFIG__": "access_log off;",
         })
     ]
 
@@ -207,10 +212,11 @@ def test_get_origin_server_config(tenant_nginx_entrypoint):
         tenant_nginx_entrypoint.get_origin_server_config(origin, tenant_name)
 
 
-def assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path):
+def assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, access_log_config='access_log off;'):
     assert_domain_server_config(0, certs_path, TEST_DOMAIN0["D0_CERT"], TEST_DOMAIN0["D0_KEY"])
     host, scheme = tenant_nginx_entrypoint.get_url_host_scheme(TEST_ORIGIN0["O0_URL"])
     assert default_conf == "\n".join([
+        tenant_nginx_entrypoint.JSON_ESCAPED_LOG_FORMAT,
         tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.DOMAIN_CONF_TEMPLATE, {
             "__SERVER_NAME__": TEST_DOMAIN0["D0_NAME"],
             "__DOMAIN_NUMBER__": "0",
@@ -218,6 +224,7 @@ def assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path):
             "__SERVER_NGINX_CONFIG__": "",
             "__LOCATION_NGINX_CONFIG__": "",
             "__CDN_CACHE_ROUTER__": tenant_nginx_entrypoint.CDN_CACHE_ROUTER,
+            "__ACCESS_LOG_CONFIG__": access_log_config,
         }),
         tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.ORIGINS_CONF_TEMPLATE, {
             "__TENANT_NAME__": TEST_TENANT_NAME,
@@ -255,22 +262,30 @@ def test_get_default_conf(tenant_nginx_entrypoint, tmpdir):
     assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path)
 
 
-def test_main(tenant_nginx_entrypoint, tmpdir):
+@pytest.mark.parametrize("extraenv,assertkwargs", [
+    ({},{}),
+    ({
+        "ENABLE_TENANT_ACCESS_LOGS": "true",
+    }, {
+        "access_log_config": 'access_log /var/log/nginx/access.logjson json_escaped;'
+    })
+])
+def test_main(tenant_nginx_entrypoint, tmpdir, extraenv, assertkwargs):
     nginx_path = os.path.join(tmpdir, 'nginx')
     os.makedirs(os.path.join(nginx_path, 'conf.d'), exist_ok=True)
     certs_path = os.path.join(tmpdir, 'certs')
-    tenant_nginx_entrypoint.main(nginx_path, certs_path, {**TEST_TENANT, **TEST_DOMAIN0, **TEST_ORIGIN0})
+    tenant_nginx_entrypoint.main(nginx_path, certs_path, {**TEST_TENANT, **TEST_DOMAIN0, **TEST_ORIGIN0, **extraenv})
     with open(os.path.join(nginx_path, "conf.d/default.conf")) as f:
         default_conf = f.read()
-    assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path)
+    assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, **assertkwargs)
 
 
 def assert_curl_issuer(hostname, expected_output, expected_issuer, *args):
     p = subprocess.Popen([
         "curl", "-kv",
-        "--resolve", f"{hostname}:48443:127.0.0.1",
+        "--resolve", f"{hostname}:58443:127.0.0.1",
         "-H", f"Host: {hostname}",
-        f"https://{hostname}:48443",
+        f"https://{hostname}:58443",
         *args
     ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     assert p.wait() == 0
@@ -283,19 +298,88 @@ def assert_curl_issuer(hostname, expected_output, expected_issuer, *args):
 
 
 @pytest.mark.skipif(os.getenv("E2E") != "yes", reason="Set E2E=yes to run E2E tests")
-def test_e2e():
+@pytest.mark.parametrize("testconf", [
+    {},
+    {
+        "access_logs": True
+    },
+    {
+        "access_logs": True,
+        "elasticsearch": True,
+    },
+])
+def test_e2e(testconf):
     try:
-        subprocess.check_call([
+        dynamic_env = {}
+        if testconf.get("access_logs"):
+            dynamic_env["ENABLE_TENANT_ACCESS_LOGS"] = "true"
+            if testconf.get("elasticsearch"):
+                dynamic_env["ENABLE_ES_SINK"] = "true"
+                dynamic_env["ES_ENDPOINTS"] = "[\\\"http://elasticsearch:9200\\\"]"
+        with open(os.path.join(os.path.dirname(__file__), "test_tenant_nginx_dynamic.env"), "w") as f:
+            for k, v in dynamic_env.items():
+                f.write(f'{k}="{v}"\n')
+            f.write("\n")
+        cmd = [
             "docker", "compose", "-f", "test_tenant_nginx_compose.yaml",
-            "up", "--wait", "--yes", "--build", "--force-recreate", "--remove-orphans",
-        ], cwd=os.path.join(os.path.dirname(__file__)))
+            "up", "--wait", "--yes", "--build", "--force-recreate", "--remove-orphans", "tenant-nginx",
+        ]
+        if testconf.get("elasticsearch"):
+            cmd.append("elasticsearch")
+        subprocess.check_call(cmd, cwd=os.path.join(os.path.dirname(__file__)))
         time.sleep(5)
         assert_curl_issuer("test1.example.com", "cache-router", "test1.example.com")
         assert_curl_issuer("test2.aaa.bbb", "cache-router", "test2.aaa.bbb")
         assert_curl_issuer("test1.example.com", "origin", "test1.example.com", "-X", "POST")
         assert_curl_issuer("test2.aaa.bbb", "origin", "test2.aaa.bbb", "-X", "DELETE")
-        assert subprocess.getstatusoutput("curl -s http://localhost:48080") == (0, "origin")
-        assert subprocess.getstatusoutput("curl -s http://localhost:48080 -X POST") == (0, "origin")
+        assert subprocess.getstatusoutput("curl -s http://localhost:58080") == (0, "origin")
+        assert subprocess.getstatusoutput("curl -s http://localhost:58080 -X POST") == (0, "origin")
+        if testconf.get("access_logs"):
+            got_it = False
+            for i in range(60):
+                time.sleep(1)
+                if testconf.get("elasticsearch"):
+                    out = None
+                    try:
+                        out = subprocess.check_output([
+                            "docker", "compose", "-f", "test_tenant_nginx_compose.yaml", "exec", "elasticsearch", "curl", "localhost:9200/_search?index=vector-*",
+                        ], text=True, cwd=os.path.join(os.path.dirname(__file__)))
+                        res = json.loads(out)
+                    except:
+                        print(out)
+                        res = None
+                    if res:
+                        try:
+                            hits = res["hits"]["hits"]
+                        except:
+                            hits = []
+                        if len(hits) >= 4:
+                            lines = [hit["_source"] for hit in hits]
+                            got_it = True
+                            break
+                else:
+                    lines = subprocess.check_output([
+                        "docker", "compose", "-f", "test_tenant_nginx_compose.yaml", "logs", "--tail=4", "--no-log-prefix", "tenant-nginx"
+                    ], text=True, cwd=os.path.join(os.path.dirname(__file__)))
+                    got_it = True
+                    for line in lines.splitlines():
+                        if not line.startswith("{"):
+                            got_it = False
+                    if got_it:
+                        lines = [json.loads(line) for line in lines.splitlines()]
+                        break
+            assert got_it
+            assert [line["request"] for line in lines] == [
+                "GET / HTTP/1.1",
+                "GET / HTTP/1.1",
+                "POST / HTTP/1.1",
+                "DELETE / HTTP/1.1",
+            ]
+    except:
+        subprocess.call([
+            "docker", "compose", "-f", "test_tenant_nginx_compose.yaml", "logs"
+        ], cwd=os.path.join(os.path.dirname(__file__)))
+        raise
     finally:
         subprocess.call([
             "docker", "compose", "-f", "test_tenant_nginx_compose.yaml", "down", "-v"

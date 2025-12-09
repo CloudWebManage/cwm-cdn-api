@@ -23,7 +23,15 @@ services:
     restart: unless-stopped
     build: ../tenant-nginx
     ports:
-      - "48080:80"
-      - "48443:443"
+      - "58080:80"
+      - "58443:443"
     env_file:
       - test_tenant_nginx.env
+      - test_tenant_nginx_dynamic.env
+
+  elasticsearch:
+    image: elasticsearch:8.18.8
+    environment:
+      - "discovery.type=single-node"
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "xpack.security.enabled=false"

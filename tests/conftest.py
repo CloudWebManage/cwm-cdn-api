@@ -9,7 +9,7 @@ import pytest
 @pytest.fixture
 def tenant_nginx_entrypoint():
     sys.path.append(os.path.join(os.path.dirname(__file__), "..", "tenant-nginx"))
-    entrypoint = importlib.import_module("entrypoint")
+    entrypoint = importlib.import_module("render_nginx_conf")
     importlib.reload(entrypoint)
     sys.path.pop()
     yield entrypoint

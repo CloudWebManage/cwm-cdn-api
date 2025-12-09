@@ -15,6 +15,7 @@ server {
     ssl_certificate_key /certs/tls__DOMAIN_NUMBER__.key;
     __SERVER_NGINX_CONFIG__
     location / {
+        __ACCESS_LOG_CONFIG__
         proxy_pass __CDN_CACHE_ROUTER__;
         proxy_set_header X-CWMCDN-Tenant-Name __TENANT_NAME__;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -34,6 +35,7 @@ server {
     server_name  _;
     __SERVER_NGINX_CONFIG__
     location / {
+        access_log off;
         proxy_pass __ORIGIN_URL__;
         proxy_set_header Host __ORIGIN_URL_HOST__;
         proxy_set_header X-Forwarded-Proto __ORIGIN_URL_SCHEME__;
@@ -49,6 +51,23 @@ server {
         __LOCATION_NGINX_CONFIG__
     }
 }
+'''
+
+JSON_ESCAPED_LOG_FORMAT = '''
+log_format json_escaped escape=json
+  '{'
+    '"time_local":"$time_local",'
+    '"remote_addr":"$remote_addr",'
+    '"request":"$request",'
+    '"status":$status,'
+    '"body_bytes_sent":$body_bytes_sent,'
+    '"http_referer":"$http_referer",'
+    '"http_user_agent":"$http_user_agent",'
+    '"request_time":$request_time,'
+    '"upstream_addr":"$upstream_addr",'
+    '"upstream_status":"$upstream_status",'
+    '"upstream_response_time":"$upstream_response_time"'
+  '}';
 '''
 
 CONFIG_PARSE_REGEX = re.compile(r'^([A-Z])(\d+)_(.+)$')
@@ -76,7 +95,7 @@ def parse_configs(env):
     return list(domains.values()), list(origins.values())
 
 
-def get_domain_server_config(i, domain, certs_path, tenant_name):
+def get_domain_server_config(i, domain, certs_path, tenant_name, access_log_config):
     domain = deepcopy(domain)
     assert "NAME" in domain and "CERT" in domain and "KEY" in domain, "NAME, CERT and KEY must be set in all domain configurations"
     name, cert, key = domain.pop("NAME"), domain.pop("CERT"), domain.pop("KEY")
@@ -98,15 +117,16 @@ def get_domain_server_config(i, domain, certs_path, tenant_name):
         "__SERVER_NGINX_CONFIG__": server_nginx_config,
         "__LOCATION_NGINX_CONFIG__": location_nginx_config,
         "__CDN_CACHE_ROUTER__": CDN_CACHE_ROUTER,
+        "__ACCESS_LOG_CONFIG__": access_log_config if access_log_config else '',
     })
     return server_config
 
 
-def get_domains_server_configs(domains, certs_path, tenant_name):
-    server_configs = []
+def get_domains_server_configs(domains, certs_path, tenant_name, access_log_config):
+    server_configs = [JSON_ESCAPED_LOG_FORMAT]
     os.makedirs(certs_path, exist_ok=True)
     for i, domain in enumerate(domains):
-        server_configs.append(get_domain_server_config(i, domain, certs_path, tenant_name))
+        server_configs.append(get_domain_server_config(i, domain, certs_path, tenant_name, access_log_config))
     return server_configs
 
 
@@ -145,11 +165,16 @@ def get_metrics_server_config():
 
 def get_default_conf(certs_path, env):
     tenant_name = env["TENANT_NAME"]
+    domain_access_log_path = "/var/log/nginx/access.logjson" if env.get("ENABLE_TENANT_ACCESS_LOGS") in ("1", "true", "yes") else ""
+    if domain_access_log_path:
+        domain_access_log_config = f'access_log {domain_access_log_path} json_escaped;'
+    else:
+        domain_access_log_config = 'access_log off;'
     domains, origins = parse_configs(env)
     assert len(domains) > 0, "At least one domain configuration is required"
     assert len(origins) == 1, "Exactly one origin configuration is required"
     return "\n".join([
-        *get_domains_server_configs(domains, certs_path, tenant_name),
+        *get_domains_server_configs(domains, certs_path, tenant_name, domain_access_log_config),
         get_origin_server_config(origins[0], tenant_name),
         get_metrics_server_config()
     ])
