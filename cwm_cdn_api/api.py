@@ -64,13 +64,25 @@ async def get(name):
     )
     if status == 0:
         o = orjson.loads(output)
+        conditions = {
+            condition['type']: condition
+            for condition in o.get('status', {}).get('conditions', [])
+            if condition['type'] != 'SecondariesSynced' or IS_PRIMARY
+        }
+        ready = (
+            conditions.get("Progressing", {}).get("status") == "False"
+            and conditions.get("Ready", {}).get("status") == "True"
+            and conditions.get("Degraded", {}).get("status") == "False"
+        )
         return True, {
             'domains': [{
                 k: v for k, v in domain.items() if k not in ('cert', 'key')
             } for domain in o['spec'].get('domains', [])],
             'origins': [
                 origin for origin in o['spec'].get('origins', [])
-            ]
+            ],
+            'ready': ready,
+            'conditions': conditions,
         }
     else:
         return False, output
