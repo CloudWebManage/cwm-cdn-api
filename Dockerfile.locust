@@ -1,0 +1,18 @@
+ARG PYTHON_VERSION=3.12
+
+FROM python:${PYTHON_VERSION} AS build
+ARG UV_VERSION=0.8.8
+RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
+COPY pyproject.toml uv.lock /srv/cwm-cdn-api/
+WORKDIR /srv/cwm-cdn-api
+RUN ~/.local/bin/uv export --no-emit-project --extra load-test > requirements.txt
+
+FROM ghcr.io/cloudwebmanage/cwm-cdn-api:latest
+USER root
+COPY --from=build /srv/cwm-cdn-api/requirements.txt /srv/cwm-cdn-api/requirements.txt
+RUN pip install --upgrade pip && pip install --no-cache-dir -r /srv/cwm-cdn-api/requirements.txt
+COPY pyproject.toml gunicorn.conf.py docker_entrypoint.sh ./
+COPY cwm_cdn_api ./cwm_cdn_api
+RUN pip install --no-cache-dir --no-deps -e .
+USER cwm-cdn-api
+ENTRYPOINT ["locust", "-f", "cwm_cdn_api/load_tests/locustfile.py"]

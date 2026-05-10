@@ -71,5 +71,9 @@ async def components_status():
     common.json_print(await api.components_status())
 
 
+from .load_tests import cli as load_tests_cli
+main.add_command(load_tests_cli.main, name='load-tests')
+
+
 if __name__ == '__main__':
     main()
