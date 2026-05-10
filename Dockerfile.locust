@@ -12,6 +12,7 @@ USER root
 COPY --from=build /srv/cwm-cdn-api/requirements.txt /srv/cwm-cdn-api/requirements.txt
 RUN pip install --upgrade pip && pip install --no-cache-dir -r /srv/cwm-cdn-api/requirements.txt
 COPY pyproject.toml gunicorn.conf.py docker_entrypoint.sh ./
+COPY tests ./tests
 COPY cwm_cdn_api ./cwm_cdn_api
 RUN pip install --no-cache-dir --no-deps -e .
 USER cwm-cdn-api
