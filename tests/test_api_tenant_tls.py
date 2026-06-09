@@ -18,8 +18,15 @@ def tenant_spec(**domain_overrides):
     }
 
 
-def test_validate_spec_rejects_internal_certificate_fields():
-    spec = tenant_spec(secretName="tenant-provided-secret")
+@pytest.mark.parametrize("field", [
+    "issuerRef",
+    "secretName",
+    "clusterIssuer",
+    "issuer",
+    "certificateName",
+])
+def test_validate_spec_rejects_internal_certificate_fields(field):
+    spec = tenant_spec(**{field: "tenant-provided-secret"})
     with pytest.raises(ValueError, match="internal certificate fields"):
         api.validate_spec(spec)
 
@@ -38,6 +45,25 @@ def test_validate_spec_accepts_multiple_domains_and_letsencrypt():
         "tls": {"mode": "letsencrypt", "redirectHttpToHttps": True},
     })
     api.validate_spec(spec)
+
+
+def test_validate_spec_rejects_letsencrypt_with_inline_certificate():
+    spec = tenant_spec(tls={"mode": "letsencrypt"})
+    with pytest.raises(ValueError, match="must not include cert or key"):
+        api.validate_spec(spec)
+
+
+@pytest.mark.parametrize("domain", ["localhost", "*.example.com", "-bad.example.com", "bad-.example.com"])
+def test_validate_spec_rejects_invalid_letsencrypt_domain(domain):
+    spec = tenant_spec(name=domain, cert=None, key=None, tls={"mode": "letsencrypt"})
+    with pytest.raises(ValueError, match="valid customer-owned domain"):
+        api.validate_spec(spec)
+
+
+def test_validate_spec_rejects_non_object_tls():
+    spec = tenant_spec(tls="letsencrypt")
+    with pytest.raises(ValueError, match="tls must be an object"):
+        api.validate_spec(spec)
 
 
 def test_certificate_resource_details_only_includes_letsencrypt_domains():

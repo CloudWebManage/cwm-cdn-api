@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import tempfile
 from copy import deepcopy
@@ -13,9 +14,11 @@ FORBIDDEN_TENANT_FIELDS = {
     'issuerRef', 'secretName', 'certificate', 'certificates', 'dnsNames',
     'commonName', 'duration', 'renewBefore', 'usages', 'privateKey',
     'keystores', 'subject', 'isCA', 'acme', 'solver', 'solvers',
+    'clusterIssuer', 'issuer', 'certificateName', 'generatedSecretName',
 }
 SUPPORTED_TLS_MODES = {'provided', 'letsencrypt'}
 SUPPORTED_TLS_VERSIONS = {'TLSv1.2', 'TLSv1.3'}
+DNS_LABEL_RE = re.compile(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$', re.IGNORECASE)
 
 
 async def reserved_names_iterator():
@@ -53,6 +56,18 @@ def _domain_tls(domain):
     return tls, mode, min_version, max_version
 
 
+def _is_valid_domain_name(name):
+    if not isinstance(name, str) or not name or len(name) > 253:
+        return False
+    name = name.rstrip('.')
+    if not name or '*' in name:
+        return False
+    labels = name.split('.')
+    if len(labels) < 2:
+        return False
+    return all(DNS_LABEL_RE.match(label) for label in labels)
+
+
 def validate_spec(spec):
     if not isinstance(spec, dict):
         raise ValueError('Tenant spec must be an object')
@@ -70,9 +85,9 @@ def validate_spec(spec):
             raise ValueError(f'domains[{i}] must be an object')
         if not domain.get('name'):
             raise ValueError(f'domains[{i}].name is required')
-        tls, mode, min_version, max_version = _domain_tls(domain)
-        if not isinstance(tls, dict):
+        if 'tls' in domain and domain['tls'] is not None and not isinstance(domain['tls'], dict):
             raise ValueError(f'domains[{i}].tls must be an object')
+        tls, mode, min_version, max_version = _domain_tls(domain)
         if mode not in SUPPORTED_TLS_MODES:
             raise ValueError(f'domains[{i}].tls.mode must be one of: letsencrypt, provided')
         if min_version not in SUPPORTED_TLS_VERSIONS:
@@ -83,6 +98,11 @@ def validate_spec(spec):
             raise ValueError(f'domains[{i}].tls.minVersion cannot be greater than maxVersion')
         if mode == 'provided' and (not domain.get('cert') or not domain.get('key')):
             raise ValueError(f'domains[{i}] with tls.mode=provided requires cert and key')
+        if mode == 'letsencrypt':
+            if domain.get('cert') or domain.get('key'):
+                raise ValueError(f'domains[{i}] with tls.mode=letsencrypt must not include cert or key')
+            if not _is_valid_domain_name(domain.get('name')):
+                raise ValueError(f'domains[{i}].name must be a valid customer-owned domain for tls.mode=letsencrypt')
 
     origins = spec.get('origins')
     if not isinstance(origins, list) or not origins:
