@@ -3,8 +3,13 @@ import re
 import subprocess
 import tempfile
 from copy import deepcopy
+import time
+import asyncio
+from datetime import datetime, timezone
+from urllib.parse import urlsplit, urlunsplit
 
 import orjson
+import requests
 
 from .common import async_subprocess_check_output, async_subprocess_status_output
 from .config import NAMESPACE, ALLOWED_PRIMARY_KEY, IS_PRIMARY
@@ -19,6 +24,117 @@ FORBIDDEN_TENANT_FIELDS = {
 SUPPORTED_TLS_MODES = {'provided', 'letsencrypt'}
 SUPPORTED_TLS_VERSIONS = {'TLSv1.2', 'TLSv1.3'}
 DNS_LABEL_RE = re.compile(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$', re.IGNORECASE)
+
+
+DEFAULT_ORIGIN_HEALTH_CHECK = {
+    "enabled": True,
+    "path": "/",
+    "expectedStatus": 200,
+    "timeout": "2s",
+}
+
+
+def parse_duration_seconds(value, default):
+    if value in (None, ""):
+        value = default
+    value = str(value)
+    multipliers = {"ms": 0.001, "s": 1, "m": 60, "h": 3600}
+    for suffix, multiplier in multipliers.items():
+        if value.endswith(suffix):
+            number = value[:-len(suffix)]
+            break
+    else:
+        number, multiplier = value, 1
+    try:
+        seconds = float(number) * multiplier
+    except Exception as e:
+        raise ValueError(f"Invalid duration value: {value}") from e
+    if seconds <= 0:
+        raise ValueError(f"Duration value must be positive: {value}")
+    return seconds
+
+
+def parse_origin_url(origin_url):
+    parsed = urlsplit(origin_url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError(f"Invalid origin URL: {origin_url}")
+    return parsed
+
+
+def validate_origins(origins):
+    if not origins:
+        raise ValueError("At least one origin is required")
+    for origin in origins:
+        parse_origin_url(origin.get("url", ""))
+    if len(origins) > 1:
+        for origin in origins:
+            parsed = parse_origin_url(origin.get("url", ""))
+            if parsed.path not in ("", "/"):
+                raise ValueError("Path-prefixed origin URLs are not supported with multiple origins")
+
+
+def origin_name(origin, index):
+    return origin.get("name") or f"origin-{index}"
+
+
+def get_origin_health_check(origin):
+    health_check = {**DEFAULT_ORIGIN_HEALTH_CHECK, **origin.get("healthCheck", {})}
+    health_check["enabled"] = health_check.get("enabled") is not False
+    health_check["expectedStatus"] = int(health_check.get("expectedStatus", 200))
+    health_check["timeoutSeconds"] = parse_duration_seconds(health_check.get("timeout"), DEFAULT_ORIGIN_HEALTH_CHECK["timeout"])
+    path = health_check.get("path") or "/"
+    if not path.startswith("/"):
+        raise ValueError("Origin health check path must start with /")
+    health_check["path"] = path
+    return health_check
+
+
+def build_origin_health_url(origin_url, health_path):
+    parsed = parse_origin_url(origin_url)
+    return urlunsplit((parsed.scheme, parsed.netloc, health_path, "", ""))
+
+
+def check_origin_health(origin, index):
+    name = origin_name(origin, index)
+    origin_url = origin.get("url", "")
+    checked_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    health_check = get_origin_health_check(origin)
+    if not health_check["enabled"]:
+        return {
+            "name": name,
+            "url": origin_url,
+            "healthy": True,
+            "statusCode": None,
+            "latencyMs": 0,
+            "checkedAt": checked_at,
+            "message": "health check disabled",
+        }
+    health_url = build_origin_health_url(origin_url, health_check["path"])
+    start = time.monotonic()
+    try:
+        response = requests.get(health_url, timeout=health_check["timeoutSeconds"], allow_redirects=False)
+        latency_ms = int((time.monotonic() - start) * 1000)
+        healthy = response.status_code == health_check["expectedStatus"]
+        return {
+            "name": name,
+            "url": origin_url,
+            "healthy": healthy,
+            "statusCode": response.status_code,
+            "latencyMs": latency_ms,
+            "checkedAt": checked_at,
+            "message": "" if healthy else f"unexpected status {response.status_code}",
+        }
+    except requests.RequestException as e:
+        latency_ms = int((time.monotonic() - start) * 1000)
+        return {
+            "name": name,
+            "url": origin_url,
+            "healthy": False,
+            "statusCode": None,
+            "latencyMs": latency_ms,
+            "checkedAt": checked_at,
+            "message": str(e),
+        }
 
 
 async def reserved_names_iterator():
@@ -149,6 +265,10 @@ async def apply(name, spec):
     await validate_name(name)
     spec = deepcopy(spec)
     primary_key = spec.pop("primaryKey", "")
+    try:
+        validate_origins(spec.get("origins", []))
+    except ValueError as e:
+        return False, str(e)
     if not IS_PRIMARY and primary_key != ALLOWED_PRIMARY_KEY:
         return False, 'Updates are not allowed on this instance'
     try:
@@ -232,6 +352,25 @@ async def debug_certificates(name, primary_key):
     return True, {
         'certificates': certificate_resource_details(name, o.get('spec', {})),
     }
+
+
+async def origins_health(name):
+    status, output = await async_subprocess_status_output(
+        'kubectl', 'get', 'cdntenant.cdn.cloudwm-cdn.com', name, '-n', NAMESPACE, '-o', 'json',
+        stderr=subprocess.STDOUT
+    )
+    if status != 0:
+        return False, output
+    tenant = orjson.loads(output)
+    origins = tenant.get("spec", {}).get("origins", [])
+    try:
+        validate_origins(origins)
+        return True, await asyncio.gather(*[
+            asyncio.to_thread(check_origin_health, origin, index)
+            for index, origin in enumerate(origins)
+        ])
+    except ValueError as e:
+        return False, str(e)
 
 
 async def list_iterator():
