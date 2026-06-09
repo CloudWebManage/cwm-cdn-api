@@ -22,8 +22,21 @@ async def apply(
         "domains": [
             {
                 "name": "test.example.com",
+                "tls": {
+                    "mode": "provided",
+                    "minVersion": "TLSv1.2",
+                    "maxVersion": "TLSv1.3",
+                    "redirectHttpToHttps": False,
+                },
                 "cert": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
                 "key": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+            },
+            {
+                "name": "customer-owned.example.com",
+                "tls": {
+                    "mode": "letsencrypt",
+                    "redirectHttpToHttps": True,
+                }
             }
         ],
         "origins": [
@@ -39,6 +52,19 @@ async def apply(
         content={
             "success": success,
             "msg": output
+        }
+    )
+
+
+@router.get("/debug/certificates")
+async def debug_certificates(cdn_tenant_name: str, primary_key: str):
+    success, output = await api.debug_certificates(cdn_tenant_name, primary_key)
+    return ORJSONResponse(
+        status_code=200 if success else 403,
+        content={
+            "success": success,
+            "debug": output if success else None,
+            "msg": None if success else output,
         }
     )
 

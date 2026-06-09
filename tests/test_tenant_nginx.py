@@ -95,11 +95,41 @@ def assert_domain_server_config(i, certs_path, cert, key):
         assert os.fstat(f.fileno()).st_mode & 0o777 == 0o600
 
 
+def expected_domain_server_config(tenant_nginx_entrypoint, i, certs_path, name, tenant_name, access_log_config='access_log off;', tls_protocols='TLSv1.2 TLSv1.3', redirect=False):
+    cert_path = os.path.join(certs_path, f"tls{i}.crt")
+    key_path = os.path.join(certs_path, f"tls{i}.key")
+    https_config = tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.DOMAIN_CONF_TEMPLATE, {
+        "__SERVER_NAME__": name,
+        "__CERT_PATH__": cert_path,
+        "__KEY_PATH__": key_path,
+        "__TLS_PROTOCOLS__": tls_protocols,
+        "__TENANT_NAME__": tenant_name,
+        "__SERVER_NGINX_CONFIG__": "",
+        "__LOCATION_NGINX_CONFIG__": "",
+        "__CDN_CACHE_ROUTER__": tenant_nginx_entrypoint.CDN_CACHE_ROUTER,
+        "__ACCESS_LOG_CONFIG__": access_log_config,
+    })
+    if redirect:
+        http_location_config = "return 308 https://$host$request_uri;"
+    else:
+        http_location_config = tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.DOMAIN_HTTP_PROXY_LOCATION_CONFIG_TEMPLATE, {
+            "__TENANT_NAME__": tenant_name,
+            "__CDN_CACHE_ROUTER__": tenant_nginx_entrypoint.CDN_CACHE_ROUTER,
+            "__ACCESS_LOG_CONFIG__": access_log_config,
+        }).strip()
+    http_config = tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.DOMAIN_HTTP_CONF_TEMPLATE, {
+        "__SERVER_NAME__": name,
+        "__ACME_CHALLENGE_ROOT__": tenant_nginx_entrypoint.ACME_CHALLENGE_ROOT,
+        "__HTTP_LOCATION_CONFIG__": http_location_config,
+    })
+    return "\n".join([https_config, http_config])
+
+
 def test_get_domain_server_config(tmpdir, tenant_nginx_entrypoint):
     tenant_name = "tenant1"
     certs_path = tmpdir
     i, domain = 0, {}
-    with pytest.raises(AssertionError, match="NAME, CERT and KEY must be set in all domain configurations"):
+    with pytest.raises(AssertionError, match="NAME must be set in all domain configurations"):
         tenant_nginx_entrypoint.get_domain_server_config(i, domain, certs_path, tenant_name, "access_log off;")
     domain = {
         "NAME": "test.example.com",
@@ -108,15 +138,25 @@ def test_get_domain_server_config(tmpdir, tenant_nginx_entrypoint):
     }
     server_config = tenant_nginx_entrypoint.get_domain_server_config(i, domain, certs_path, tenant_name, "access_log off;")
     assert_domain_server_config(i, certs_path, "cert1", "key1")
-    assert server_config == tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.DOMAIN_CONF_TEMPLATE, {
-        "__SERVER_NAME__": "test.example.com",
-        "__DOMAIN_NUMBER__": "0",
-        "__TENANT_NAME__": tenant_name,
-        "__SERVER_NGINX_CONFIG__": "",
-        "__LOCATION_NGINX_CONFIG__": "",
-        "__CDN_CACHE_ROUTER__": tenant_nginx_entrypoint.CDN_CACHE_ROUTER,
-        "__ACCESS_LOG_CONFIG__": "access_log off;",
-    })
+    assert server_config == expected_domain_server_config(tenant_nginx_entrypoint, i, certs_path, "test.example.com", tenant_name)
+    assert "proxy_set_header X-Forwarded-Proto http;" in server_config
+    assert server_config.count(f"proxy_pass {tenant_nginx_entrypoint.CDN_CACHE_ROUTER};") == 2
+    domain = {
+        "NAME": "le.example.com",
+        "TLS_MODE": "letsencrypt",
+        "TLS_MIN_VERSION": "TLSv1.3",
+        "TLS_MAX_VERSION": "TLSv1.3",
+        "REDIRECT_HTTP_TO_HTTPS": "true",
+        "CERT_PATH": "/certs/letsencrypt/0/tls.crt",
+        "KEY_PATH": "/certs/letsencrypt/0/tls.key",
+    }
+    server_config = tenant_nginx_entrypoint.get_domain_server_config(i, domain, certs_path, tenant_name, "access_log off;")
+    assert "ssl_protocols TLSv1.3;" in server_config
+    assert "return 308 https://$host$request_uri;" in server_config
+    assert "/.well-known/acme-challenge/" in server_config
+    assert "/certs/letsencrypt/0/tls.crt" in server_config
+    with pytest.raises(AssertionError, match="Unsupported TLS minVersion: TLSv1.1"):
+        tenant_nginx_entrypoint.get_domain_server_config(i, {"NAME": "old.example.com", "CERT": "c", "KEY": "k", "TLS_MIN_VERSION": "TLSv1.1"}, certs_path, tenant_name, "access_log off;")
     domain["FOO"] = "bar"
     domain["BAR"] = "baz"
     with pytest.raises(AssertionError, match="Unknown domain configuration keys: FOO, BAR"):
@@ -143,24 +183,8 @@ def test_get_domains_server_configs(tmpdir, tenant_nginx_entrypoint):
     assert_domain_server_config(1, certs_path, "cert2", "key2")
     assert server_configs == [
         tenant_nginx_entrypoint.JSON_ESCAPED_LOG_FORMAT,
-        tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.DOMAIN_CONF_TEMPLATE, {
-            "__SERVER_NAME__": "test1.example.com",
-            "__DOMAIN_NUMBER__": "0",
-            "__TENANT_NAME__": tenant_name,
-            "__SERVER_NGINX_CONFIG__": "",
-            "__LOCATION_NGINX_CONFIG__": "",
-            "__CDN_CACHE_ROUTER__": tenant_nginx_entrypoint.CDN_CACHE_ROUTER,
-            "__ACCESS_LOG_CONFIG__": "access_log off;",
-        }),
-        tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.DOMAIN_CONF_TEMPLATE, {
-            "__SERVER_NAME__": "test2.example.com",
-            "__DOMAIN_NUMBER__": "1",
-            "__TENANT_NAME__": tenant_name,
-            "__SERVER_NGINX_CONFIG__": "",
-            "__LOCATION_NGINX_CONFIG__": "",
-            "__CDN_CACHE_ROUTER__": tenant_nginx_entrypoint.CDN_CACHE_ROUTER,
-            "__ACCESS_LOG_CONFIG__": "access_log off;",
-        })
+        expected_domain_server_config(tenant_nginx_entrypoint, 0, certs_path, "test1.example.com", tenant_name),
+        expected_domain_server_config(tenant_nginx_entrypoint, 1, certs_path, "test2.example.com", tenant_name),
     ]
 
 
@@ -217,15 +241,7 @@ def assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, 
     host, scheme = tenant_nginx_entrypoint.get_url_host_scheme(TEST_ORIGIN0["O0_URL"])
     assert default_conf == "\n".join([
         tenant_nginx_entrypoint.JSON_ESCAPED_LOG_FORMAT,
-        tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.DOMAIN_CONF_TEMPLATE, {
-            "__SERVER_NAME__": TEST_DOMAIN0["D0_NAME"],
-            "__DOMAIN_NUMBER__": "0",
-            "__TENANT_NAME__": TEST_TENANT_NAME,
-            "__SERVER_NGINX_CONFIG__": "",
-            "__LOCATION_NGINX_CONFIG__": "",
-            "__CDN_CACHE_ROUTER__": tenant_nginx_entrypoint.CDN_CACHE_ROUTER,
-            "__ACCESS_LOG_CONFIG__": access_log_config,
-        }),
+        expected_domain_server_config(tenant_nginx_entrypoint, 0, certs_path, TEST_DOMAIN0["D0_NAME"], TEST_TENANT_NAME, access_log_config),
         tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.ORIGINS_CONF_TEMPLATE, {
             "__TENANT_NAME__": TEST_TENANT_NAME,
             "__ORIGIN_URL__": TEST_ORIGIN0["O0_URL"],
