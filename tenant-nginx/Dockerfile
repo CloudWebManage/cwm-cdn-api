@@ -1,4 +1,4 @@
-FROM ghcr.io/cloudwebmanage/cwm-iac-openresty:08370351309932e3feba7de76114b9fb416b114d
+FROM ghcr.io/cloudwebmanage/cwm-iac-openresty:e20b995cdaf10a22146d2032fc90eec6d3eb1eb6
 RUN apk update &&\
     apk add --no-cache supervisor logrotate &&\
     mkdir vector &&\
