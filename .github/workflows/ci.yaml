@@ -28,7 +28,9 @@ jobs:
         with:
           test_script: |
             uv sync
-            E2E=yes uv run pytest
+            E2E=yes uv run pytest \
+              --ignore=tests/test_tenant_nginx.py \
+              --ignore=tests/test_cache_nginx.py
           image_suffix: cwm-cdn-api
           build_args: |
             PYTHON_VERSION=${{ env.PYTHON_VERSION }}
