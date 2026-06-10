@@ -63,18 +63,9 @@ ORIGINS_CONF_TEMPLATE = '''
 lua_shared_dict origin_health 10m;
 
 init_worker_by_lua_block {
+    local origin_health = require "origin_health"
     local origins = __ORIGINS_LUA__
     local health = ngx.shared.origin_health
-
-    local function set_default_state(origin)
-        health:set(origin.key .. ":healthy", 1)
-        health:set(origin.key .. ":fails", 0)
-        health:set(origin.key .. ":successes", 0)
-        health:set(origin.key .. ":status", 0)
-        health:set(origin.key .. ":latency_ms", 0)
-        health:set(origin.key .. ":message", "health check disabled")
-        health:set(origin.key .. ":checked_at", ngx.time())
-    end
 
     local function check_origin(premature, origin)
         if premature then
@@ -95,12 +86,11 @@ init_worker_by_lua_block {
                 end
             end
             if message == "" then
-                local request = "GET " .. origin.health.path .. " HTTP/1.1\\r\\nHost: " .. origin.host_header .. "\\r\\nConnection: close\\r\\n\\r\\n"
-                local sent, send_err = sock:send(request)
+                local sent, send_err = sock:send(origin_health.build_check_request(origin))
                 if sent then
                     local line, read_err = sock:receive("*l")
                     if line then
-                        status = tonumber(string.match(line, "HTTP/%d+%.%d+%s+(%d+)")) or 0
+                        status = origin_health.parse_status_line(line)
                         ok = status == origin.health.expected_status
                         if not ok then
                             message = "unexpected status " .. status
@@ -118,31 +108,12 @@ init_worker_by_lua_block {
         sock:close()
 
         local latency_ms = math.floor((ngx.now() - start) * 1000)
-        local fails = health:get(origin.key .. ":fails") or 0
-        local successes = health:get(origin.key .. ":successes") or 0
-        local healthy = health:get(origin.key .. ":healthy") ~= 0
-
-        if ok then
-            successes = successes + 1
-            fails = 0
-            if successes >= origin.health.healthy_threshold then
-                healthy = true
-            end
-        else
-            fails = fails + 1
-            successes = 0
-            if fails >= origin.health.unhealthy_threshold then
-                healthy = false
-            end
-        end
-
-        health:set(origin.key .. ":healthy", healthy and 1 or 0)
-        health:set(origin.key .. ":fails", fails)
-        health:set(origin.key .. ":successes", successes)
-        health:set(origin.key .. ":status", status)
-        health:set(origin.key .. ":latency_ms", latency_ms)
-        health:set(origin.key .. ":message", message)
-        health:set(origin.key .. ":checked_at", ngx.time())
+        local state = origin_health.apply_check_result(origin, origin_health.read_state(health, origin), ok)
+        state.status = status
+        state.latency_ms = latency_ms
+        state.message = message
+        state.checked_at = ngx.time()
+        origin_health.write_state(health, origin, state)
 
         local timer_ok, timer_err = ngx.timer.at(origin.health.interval, check_origin, origin)
         if not timer_ok then
@@ -158,7 +129,7 @@ init_worker_by_lua_block {
                 ngx.log(ngx.ERR, "failed to start origin health check for ", origin.name, ": ", err)
             end
         else
-            set_default_state(origin)
+            origin_health.write_state(health, origin, origin_health.default_state(ngx.time()))
         end
     end
 }
@@ -167,28 +138,19 @@ upstream tenant_origin_upstream {
     server 0.0.0.1 max_fails=1 fail_timeout=10s;
     balancer_by_lua_block {
         local balancer = require "ngx.balancer"
+        local origin_balancer = require "origin_balancer"
         local origins = __ORIGINS_LUA__
         local health = ngx.shared.origin_health
         local desired_scheme = ngx.var.origin_scheme
         local tried = ngx.ctx.tried_origins or {}
         ngx.ctx.tried_origins = tried
 
-        local index = tonumber(ngx.var.origin_index)
-        if index == nil or tried[index] then
-            index = nil
-            for i, origin in ipairs(origins) do
-                if origin.scheme == desired_scheme and not tried[i] and health:get(origin.key .. ":healthy") ~= 0 then
-                    index = i
-                    break
-                end
-            end
-        end
+        local index, origin = origin_balancer.select_retry_origin(origins, health, desired_scheme, tried, ngx.var.origin_index)
 
         if index == nil then
             return ngx.exit(ngx.HTTP_SERVICE_UNAVAILABLE)
         end
 
-        local origin = origins[index]
         tried[index] = true
         ngx.var.origin_index = tostring(index)
         ngx.var.origin_name = origin.name
@@ -196,12 +158,7 @@ upstream tenant_origin_upstream {
         ngx.var.origin_sni = origin.host
         ngx.var.origin_url = origin.url
         ngx.var.origin_request_uri = origin.request_uri_prefix .. ngx.var.request_uri
-        local remaining = 0
-        for i, retry_origin in ipairs(origins) do
-            if retry_origin.scheme == desired_scheme and not tried[i] and health:get(retry_origin.key .. ":healthy") ~= 0 then
-                remaining = remaining + 1
-            end
-        end
+        local remaining = origin_balancer.count_remaining_retries(origins, health, desired_scheme, tried)
         if remaining > 0 then
             balancer.set_more_tries(remaining)
         end
@@ -229,37 +186,28 @@ server {
     location / {
         access_log off;
         access_by_lua_block {
+            local origin_balancer = require "origin_balancer"
             local origins = __ORIGINS_LUA__
             local health = ngx.shared.origin_health
-            local total_weight = 0
-            for _, origin in ipairs(origins) do
-                if health:get(origin.key .. ":healthy") ~= 0 then
-                    total_weight = total_weight + origin.weight
-                end
-            end
+            local total_weight = origin_balancer.total_healthy_weight(origins, health)
             if total_weight == 0 then
                 ngx.log(ngx.ERR, "all origins are unhealthy for tenant __TENANT_NAME__")
                 return ngx.exit(ngx.HTTP_SERVICE_UNAVAILABLE)
             end
             local cursor = (health:incr("rr_cursor", 1, 0) % total_weight) + 1
-            local running = 0
-            for i, origin in ipairs(origins) do
-                if health:get(origin.key .. ":healthy") ~= 0 then
-                    running = running + origin.weight
-                    if cursor <= running then
-                        ngx.var.origin_index = tostring(i)
-                        ngx.var.origin_name = origin.name
-                        ngx.var.origin_host = origin.host_header
-                        ngx.var.origin_sni = origin.host
-                        ngx.var.origin_url = origin.url
-                        ngx.var.origin_scheme = origin.scheme
-                        ngx.var.origin_request_uri = origin.request_uri_prefix .. ngx.var.request_uri
-                        if origin.scheme == "https" then
-                            return ngx.exec("@origin_https")
-                        end
-                        return ngx.exec("@origin_http")
-                    end
+            local index, origin = origin_balancer.select_weighted_origin(origins, health, cursor)
+            if index ~= nil then
+                ngx.var.origin_index = tostring(index)
+                ngx.var.origin_name = origin.name
+                ngx.var.origin_host = origin.host_header
+                ngx.var.origin_sni = origin.host
+                ngx.var.origin_url = origin.url
+                ngx.var.origin_scheme = origin.scheme
+                ngx.var.origin_request_uri = origin.request_uri_prefix .. ngx.var.request_uri
+                if origin.scheme == "https" then
+                    return ngx.exec("@origin_https")
                 end
+                return ngx.exec("@origin_http")
             end
             return ngx.exit(ngx.HTTP_SERVICE_UNAVAILABLE)
         }

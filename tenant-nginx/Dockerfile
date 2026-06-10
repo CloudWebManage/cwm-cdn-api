@@ -7,11 +7,12 @@ RUN apk update &&\
     mv vector/bin/vector /usr/local/bin/vector &&\
     rm -rf vector &&\
     mkdir -p /var/vector/data
-COPY entrypoint.sh /srv/
-COPY logrotate.conf /srv/
-COPY logrotate.sh /srv/
-COPY render_nginx_conf.py /srv/
-COPY render_vector_config.py /srv/
-COPY supervisord.conf /srv/
-COPY vector.template.yaml /srv/
+COPY tenant-nginx/entrypoint.sh /srv/
+COPY tenant-nginx/logrotate.conf /srv/
+COPY tenant-nginx/logrotate.sh /srv/
+COPY tenant-nginx/render_nginx_conf.py /srv/
+COPY tenant-nginx/render_vector_config.py /srv/
+COPY tenant-nginx/supervisord.conf /srv/
+COPY tenant-nginx/vector.template.yaml /srv/
+COPY lua/origin_balancer.lua lua/origin_health.lua /usr/local/openresty/lualib/
 ENTRYPOINT ["/srv/entrypoint.sh"]
