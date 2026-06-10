@@ -61,8 +61,11 @@ DOMAIN_HTTP_PROXY_LOCATION_CONFIG_TEMPLATE = '''
 
 ORIGINS_CONF_TEMPLATE = '''
 lua_shared_dict origin_health 10m;
+include /etc/nginx/metrics_shared_dict.conf;
 
 init_worker_by_lua_block {
+    dofile("/etc/nginx/metrics_init.lua")
+
     local origin_health = require "origin_health"
     local origins = __ORIGINS_LUA__
     local health = ngx.shared.origin_health
@@ -162,7 +165,8 @@ upstream tenant_origin_upstream {
         if remaining > 0 then
             balancer.set_more_tries(remaining)
         end
-        local ok, err = balancer.set_current_peer(origin.host, origin.port)
+        local peer_host = health:get(origin.key .. ":peer_host") or origin.host
+        local ok, err = balancer.set_current_peer(peer_host, origin.port)
         if not ok then
             ngx.log(ngx.ERR, "failed to set origin peer ", origin.name, ": ", err)
             return ngx.exit(ngx.HTTP_SERVICE_UNAVAILABLE)
@@ -173,6 +177,7 @@ upstream tenant_origin_upstream {
 server {
     listen 80 default_server;
     server_name  _;
+    __NGINX_RESOLVER_CONFIG__
     __SERVER_NGINX_CONFIG__
 
     set $origin_index "";
@@ -187,12 +192,60 @@ server {
         access_log off;
         access_by_lua_block {
             local origin_balancer = require "origin_balancer"
+            local resolver = require "resty.dns.resolver"
             local origins = __ORIGINS_LUA__
             local health = ngx.shared.origin_health
+
+            local function resolve_origin_host(origin)
+                if origin.host:match("^%d+%.%d+%.%d+%.%d+$") then
+                    return origin.host
+                end
+
+                local nameservers = {}
+                local resolv = io.open("/etc/resolv.conf", "r")
+                if resolv then
+                    for line in resolv:lines() do
+                        local nameserver = line:match("^nameserver%s+([^%s]+)")
+                        if nameserver then
+                            table.insert(nameservers, nameserver)
+                        end
+                    end
+                    resolv:close()
+                end
+
+                local r, resolver_err = resolver:new({ nameservers = nameservers, retrans = 2, timeout = 2000 })
+                if not r then
+                    return nil, "resolver init failed: " .. (resolver_err or "unknown")
+                end
+
+                local answers, query_err = r:query(origin.host, { qtype = r.TYPE_A })
+                if not answers then
+                    return nil, query_err or "unknown"
+                end
+                if answers.errcode then
+                    return nil, answers.errstr or tostring(answers.errcode)
+                end
+
+                for _, answer in ipairs(answers) do
+                    if answer.address then
+                        return answer.address
+                    end
+                end
+                return nil, "no A record"
+            end
+
             local total_weight = origin_balancer.total_healthy_weight(origins, health)
             if total_weight == 0 then
                 ngx.log(ngx.ERR, "all origins are unhealthy for tenant __TENANT_NAME__")
                 return ngx.exit(ngx.HTTP_SERVICE_UNAVAILABLE)
+            end
+            for i, origin in ipairs(origins) do
+                local resolved_host, resolve_err = resolve_origin_host(origin)
+                if not resolved_host then
+                    ngx.log(ngx.ERR, "failed to resolve origin ", origin.name, " host ", origin.host, ": ", resolve_err)
+                    return ngx.exit(ngx.HTTP_SERVICE_UNAVAILABLE)
+                end
+                health:set(origin.key .. ":peer_host", resolved_host)
             end
             local cursor = (health:incr("rr_cursor", 1, 0) % total_weight) + 1
             local index, origin = origin_balancer.select_weighted_origin(origins, health, cursor)
@@ -504,7 +557,7 @@ def origins_to_lua(origins):
     return "{" + ",".join(lua_origins) + "}"
 
 
-def get_origin_server_config(origins, tenant_name):
+def get_origin_server_config(origins, tenant_name, nginx_resolver_config=""):
     normalized_origins = [normalize_origin(origin, i, len(origins)) for i, origin in enumerate(origins)]
     location_nginx_config = ""
     server_nginx_config = ""
@@ -513,6 +566,7 @@ def get_origin_server_config(origins, tenant_name):
         "__TENANT_NAME__": tenant_name,
         "__ORIGINS_LUA__": origins_to_lua(normalized_origins),
         "__PROXY_NEXT_UPSTREAM_TRIES__": str(max(len(normalized_origins), 1)),
+        "__NGINX_RESOLVER_CONFIG__": nginx_resolver_config,
         "__LOCATION_NGINX_CONFIG__": location_nginx_config,
         "__SERVER_NGINX_CONFIG__": server_nginx_config,
     })
@@ -520,7 +574,11 @@ def get_origin_server_config(origins, tenant_name):
 
 
 def get_metrics_server_config():
-    return 'include /etc/nginx/metrics.conf;'
+    return '''log_by_lua_block {
+    dofile("/etc/nginx/metrics_log.lua")
+}
+
+include /etc/nginx/metrics_server.conf;'''
 
 
 def get_default_conf(certs_path, env):
@@ -536,7 +594,7 @@ def get_default_conf(certs_path, env):
     return "\n".join([
         HTTP_HASH_CONFIG,
         *get_domains_server_configs(domains, certs_path, tenant_name, domain_access_log_config),
-        get_origin_server_config(origins, tenant_name),
+        get_origin_server_config(origins, tenant_name, env.get("NGINX_RESOLVER_CONFIG", "")),
         get_metrics_server_config()
     ])
 

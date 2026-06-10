@@ -227,6 +227,7 @@ def test_get_origin_server_config(tenant_nginx_entrypoint):
         "__TENANT_NAME__": tenant_name,
         "__ORIGINS_LUA__": lua_origins,
         "__PROXY_NEXT_UPSTREAM_TRIES__": "1",
+        "__NGINX_RESOLVER_CONFIG__": "",
         "__LOCATION_NGINX_CONFIG__": "",
         "__SERVER_NGINX_CONFIG__": "",
     })
@@ -318,10 +319,11 @@ def assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, 
             "__TENANT_NAME__": TEST_TENANT_NAME,
             "__ORIGINS_LUA__": lua_origins,
             "__PROXY_NEXT_UPSTREAM_TRIES__": "1",
+            "__NGINX_RESOLVER_CONFIG__": "",
             "__LOCATION_NGINX_CONFIG__": "",
             "__SERVER_NGINX_CONFIG__": "",
         }),
-        "include /etc/nginx/metrics.conf;",
+        tenant_nginx_entrypoint.get_metrics_server_config(),
     ])
 
 
@@ -372,9 +374,10 @@ def test_main(tenant_nginx_entrypoint, tmpdir, extraenv, assertkwargs):
 
 
 def assert_curl_issuer(hostname, expected_output, expected_issuer, *args):
+    docker_host_addr = os.getenv("E2E_DOCKER_HOST_ADDR", "127.0.0.1")
     p = subprocess.Popen([
         "curl", "-kv",
-        "--resolve", f"{hostname}:58443:127.0.0.1",
+        "--resolve", f"{hostname}:58443:{docker_host_addr}",
         "-H", f"Host: {hostname}",
         f"https://{hostname}:58443",
         *args
@@ -423,8 +426,9 @@ def test_e2e(testconf):
         assert_curl_issuer("test2.aaa.bbb", "cache-router", "test2.aaa.bbb")
         assert_curl_issuer("test1.example.com", "origin", "test1.example.com", "-X", "POST")
         assert_curl_issuer("test2.aaa.bbb", "origin", "test2.aaa.bbb", "-X", "DELETE")
-        assert subprocess.getstatusoutput("curl -s http://localhost:58080") == (0, "origin")
-        assert subprocess.getstatusoutput("curl -s http://localhost:58080 -X POST") == (0, "origin")
+        docker_host_addr = os.getenv("E2E_DOCKER_HOST_ADDR", "localhost")
+        assert subprocess.getstatusoutput(f"curl -s http://{docker_host_addr}:58080") == (0, "origin")
+        assert subprocess.getstatusoutput(f"curl -s http://{docker_host_addr}:58080 -X POST") == (0, "origin")
         if testconf.get("access_logs"):
             got_it = False
             for i in range(60):
