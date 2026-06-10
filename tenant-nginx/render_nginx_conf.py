@@ -5,14 +5,17 @@ from copy import deepcopy
 
 
 CDN_CACHE_ROUTER = os.getenv("CDN_CACHE_ROUTER", "http://router.cdn-cache")
+ACME_CHALLENGE_ROOT = os.getenv("ACME_CHALLENGE_ROOT", "/var/lib/cwm-cdn/acme-challenges")
+TLS_VERSIONS = ("TLSv1.2", "TLSv1.3")
 
 
 DOMAIN_CONF_TEMPLATE = '''
 server {
     listen 443 ssl;
     server_name  __SERVER_NAME__;
-    ssl_certificate /certs/tls__DOMAIN_NUMBER__.crt;
-    ssl_certificate_key /certs/tls__DOMAIN_NUMBER__.key;
+    ssl_certificate __CERT_PATH__;
+    ssl_certificate_key __KEY_PATH__;
+    ssl_protocols __TLS_PROTOCOLS__;
     __SERVER_NGINX_CONFIG__
     location / {
         __ACCESS_LOG_CONFIG__
@@ -29,9 +32,34 @@ server {
 '''
 
 
-ORIGINS_CONF_TEMPLATE = '''
+DOMAIN_HTTP_CONF_TEMPLATE = '''
 server {
     listen 80;
+    server_name  __SERVER_NAME__;
+    location ^~ /.well-known/acme-challenge/ {
+        access_log off;
+        root __ACME_CHALLENGE_ROOT__;
+        try_files $uri =404;
+    }
+    location / {
+        __HTTP_LOCATION_CONFIG__
+    }
+}
+'''
+
+
+DOMAIN_HTTP_PROXY_LOCATION_CONFIG_TEMPLATE = '''
+        __ACCESS_LOG_CONFIG__
+        proxy_pass __CDN_CACHE_ROUTER__;
+        proxy_set_header X-CWMCDN-Tenant-Name __TENANT_NAME__;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto http;
+'''
+
+
+ORIGINS_CONF_TEMPLATE = '''
+server {
+    listen 80 default_server;
     server_name  _;
     __SERVER_NGINX_CONFIG__
     location / {
@@ -70,6 +98,12 @@ log_format json_escaped escape=json
   '}';
 '''
 
+
+HTTP_HASH_CONFIG = '''
+server_names_hash_bucket_size 128;
+server_names_hash_max_size 4096;
+'''
+
 CONFIG_PARSE_REGEX = re.compile(r'^([A-Z])(\d+)_(.+)$')
 
 
@@ -78,6 +112,17 @@ def replace_keys(base, d):
     for k, v in d.items():
         out = out.replace(k, v)
     return out
+
+
+def parse_bool(value):
+    return str(value).lower() in ("1", "true", "yes", "on")
+
+
+def tls_protocols(min_version, max_version):
+    assert min_version in TLS_VERSIONS, f"Unsupported TLS minVersion: {min_version}"
+    assert max_version in TLS_VERSIONS, f"Unsupported TLS maxVersion: {max_version}"
+    assert TLS_VERSIONS.index(min_version) <= TLS_VERSIONS.index(max_version), "TLS minVersion cannot be greater than maxVersion"
+    return " ".join(TLS_VERSIONS[TLS_VERSIONS.index(min_version):TLS_VERSIONS.index(max_version) + 1])
 
 
 def parse_configs(env):
@@ -97,29 +142,58 @@ def parse_configs(env):
 
 def get_domain_server_config(i, domain, certs_path, tenant_name, access_log_config):
     domain = deepcopy(domain)
-    assert "NAME" in domain and "CERT" in domain and "KEY" in domain, "NAME, CERT and KEY must be set in all domain configurations"
-    name, cert, key = domain.pop("NAME"), domain.pop("CERT"), domain.pop("KEY")
+    assert "NAME" in domain, "NAME must be set in all domain configurations"
+    name = domain.pop("NAME")
+    tls_mode = domain.pop("TLS_MODE", "provided")
+    tls_min_version = domain.pop("TLS_MIN_VERSION", "TLSv1.2")
+    tls_max_version = domain.pop("TLS_MAX_VERSION", "TLSv1.3")
+    redirect_http_to_https = parse_bool(domain.pop("REDIRECT_HTTP_TO_HTTPS", "false"))
+    assert tls_mode in ("provided", "letsencrypt"), f"Unsupported TLS mode: {tls_mode}"
+    protocols = tls_protocols(tls_min_version, tls_max_version)
+    if tls_mode == "provided":
+        assert "CERT" in domain and "KEY" in domain, "CERT and KEY must be set for provided TLS domain configurations"
+        cert, key = domain.pop("CERT"), domain.pop("KEY")
+        cert_path = os.path.join(certs_path, f"tls{i}.crt")
+        key_path = os.path.join(certs_path, f"tls{i}.key")
+        with open(cert_path, "w") as f:
+            f.write(cert)
+        os.chmod(cert_path, 0o600)
+        with open(key_path, "w") as f:
+            f.write(key)
+        os.chmod(key_path, 0o600)
+    else:
+        cert_path = domain.pop("CERT_PATH", os.path.join(certs_path, "letsencrypt", str(i), "tls.crt"))
+        key_path = domain.pop("KEY_PATH", os.path.join(certs_path, "letsencrypt", str(i), "tls.key"))
     server_nginx_config = ""
     location_nginx_config = ""
     # TODO: pop other configs here and add to server/location nginx configs
     assert len(domain) == 0, f"Unknown domain configuration keys: {', '.join(domain.keys())}"
-    with open(os.path.join(certs_path, f"tls{i}.crt"), "w") as f:
-        f.write(cert)
-    os.chmod(os.path.join(certs_path, f"tls{i}.crt"), 0o600)
-    with open(os.path.join(certs_path, f"tls{i}.key"), "w") as f:
-        f.write(key)
-    os.chmod(os.path.join(certs_path, f"tls{i}.key"), 0o600)
     server_config = DOMAIN_CONF_TEMPLATE
     server_config = replace_keys(server_config, {
         "__SERVER_NAME__": name,
-        "__DOMAIN_NUMBER__": str(i),
+        "__CERT_PATH__": cert_path,
+        "__KEY_PATH__": key_path,
+        "__TLS_PROTOCOLS__": protocols,
         "__TENANT_NAME__": tenant_name,
         "__SERVER_NGINX_CONFIG__": server_nginx_config,
         "__LOCATION_NGINX_CONFIG__": location_nginx_config,
         "__CDN_CACHE_ROUTER__": CDN_CACHE_ROUTER,
         "__ACCESS_LOG_CONFIG__": access_log_config if access_log_config else '',
     })
-    return server_config
+    if redirect_http_to_https:
+        http_location_config = "return 308 https://$host$request_uri;"
+    else:
+        http_location_config = replace_keys(DOMAIN_HTTP_PROXY_LOCATION_CONFIG_TEMPLATE, {
+            "__TENANT_NAME__": tenant_name,
+            "__CDN_CACHE_ROUTER__": CDN_CACHE_ROUTER,
+            "__ACCESS_LOG_CONFIG__": access_log_config if access_log_config else '',
+        }).strip()
+    http_server_config = replace_keys(DOMAIN_HTTP_CONF_TEMPLATE, {
+        "__SERVER_NAME__": name,
+        "__ACME_CHALLENGE_ROOT__": ACME_CHALLENGE_ROOT,
+        "__HTTP_LOCATION_CONFIG__": http_location_config,
+    })
+    return "\n".join([server_config, http_server_config])
 
 
 def get_domains_server_configs(domains, certs_path, tenant_name, access_log_config):
@@ -174,6 +248,7 @@ def get_default_conf(certs_path, env):
     assert len(domains) > 0, "At least one domain configuration is required"
     assert len(origins) == 1, "Exactly one origin configuration is required"
     return "\n".join([
+        HTTP_HASH_CONFIG,
         *get_domains_server_configs(domains, certs_path, tenant_name, domain_access_log_config),
         get_origin_server_config(origins[0], tenant_name),
         get_metrics_server_config()
