@@ -99,6 +99,8 @@ def validate_spec(spec):
         if mode == 'provided' and (not domain.get('cert') or not domain.get('key')):
             raise ValueError(f'domains[{i}] with tls.mode=provided requires cert and key')
         if mode == 'letsencrypt':
+            if not IS_PRIMARY:
+                raise ValueError(f'domains[{i}] with tls.mode=letsencrypt is only supported on the primary cluster')
             if domain.get('cert') or domain.get('key'):
                 raise ValueError(f'domains[{i}] with tls.mode=letsencrypt must not include cert or key')
             if not _is_valid_domain_name(domain.get('name')):
@@ -128,7 +130,7 @@ def certificate_resource_details(name, spec):
             'namespace': name,
             'certificateName': _domain_certificate_name(i, domain.get('name', '')),
             'secretName': _domain_certificate_name(i, domain.get('name', '')),
-            'issuerRef': {'name': 'letsencrypt', 'kind': 'ClusterIssuer'},
+            'issuerRef': {'name': 'cdn-tenant-certs', 'kind': 'ClusterIssuer'},
         })
     return details
 

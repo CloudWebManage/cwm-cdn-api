@@ -38,7 +38,8 @@ def test_validate_spec_rejects_unsupported_tls_versions(version):
         api.validate_spec(spec)
 
 
-def test_validate_spec_accepts_multiple_domains_and_letsencrypt():
+def test_validate_spec_accepts_multiple_domains_and_letsencrypt(monkeypatch):
+    monkeypatch.setattr(api, "IS_PRIMARY", True)
     spec = tenant_spec()
     spec["domains"].append({
         "name": "customer.example.com",
@@ -47,14 +48,24 @@ def test_validate_spec_accepts_multiple_domains_and_letsencrypt():
     api.validate_spec(spec)
 
 
-def test_validate_spec_rejects_letsencrypt_with_inline_certificate():
+def test_validate_spec_rejects_letsencrypt_with_inline_certificate(monkeypatch):
+    monkeypatch.setattr(api, "IS_PRIMARY", True)
     spec = tenant_spec(tls={"mode": "letsencrypt"})
     with pytest.raises(ValueError, match="must not include cert or key"):
         api.validate_spec(spec)
 
 
+def test_validate_spec_rejects_letsencrypt_on_secondary(monkeypatch):
+    spec = tenant_spec(name="customer.example.com", cert=None, key=None, tls={"mode": "letsencrypt"})
+    monkeypatch.setattr(api, "IS_PRIMARY", False)
+
+    with pytest.raises(ValueError, match="only supported on the primary cluster"):
+        api.validate_spec(spec)
+
+
 @pytest.mark.parametrize("domain", ["localhost", "*.example.com", "-bad.example.com", "bad-.example.com"])
-def test_validate_spec_rejects_invalid_letsencrypt_domain(domain):
+def test_validate_spec_rejects_invalid_letsencrypt_domain(domain, monkeypatch):
+    monkeypatch.setattr(api, "IS_PRIMARY", True)
     spec = tenant_spec(name=domain, cert=None, key=None, tls={"mode": "letsencrypt"})
     with pytest.raises(ValueError, match="valid customer-owned domain"):
         api.validate_spec(spec)
@@ -78,7 +89,7 @@ def test_certificate_resource_details_only_includes_letsencrypt_domains():
         "namespace": "tenant1",
         "certificateName": api._domain_certificate_name(1, "customer.example.com"),
         "secretName": api._domain_certificate_name(1, "customer.example.com"),
-        "issuerRef": {"name": "letsencrypt", "kind": "ClusterIssuer"},
+        "issuerRef": {"name": "cdn-tenant-certs", "kind": "ClusterIssuer"},
     }]
 
 
