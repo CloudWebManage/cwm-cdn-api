@@ -240,6 +240,7 @@ def assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, 
     assert_domain_server_config(0, certs_path, TEST_DOMAIN0["D0_CERT"], TEST_DOMAIN0["D0_KEY"])
     host, scheme = tenant_nginx_entrypoint.get_url_host_scheme(TEST_ORIGIN0["O0_URL"])
     assert default_conf == "\n".join([
+        tenant_nginx_entrypoint.HTTP_HASH_CONFIG,
         tenant_nginx_entrypoint.JSON_ESCAPED_LOG_FORMAT,
         expected_domain_server_config(tenant_nginx_entrypoint, 0, certs_path, TEST_DOMAIN0["D0_NAME"], TEST_TENANT_NAME, access_log_config),
         tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.ORIGINS_CONF_TEMPLATE, {
@@ -276,6 +277,8 @@ def test_get_default_conf(tenant_nginx_entrypoint, tmpdir):
     env.pop("O1_URL")
     default_conf = tenant_nginx_entrypoint.get_default_conf(certs_path, env)
     assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path)
+    assert "server_names_hash_bucket_size 128;" in default_conf
+    assert "server_names_hash_max_size 4096;" in default_conf
 
 
 @pytest.mark.parametrize("extraenv,assertkwargs", [

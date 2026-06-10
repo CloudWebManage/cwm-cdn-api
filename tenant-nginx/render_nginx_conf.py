@@ -98,6 +98,12 @@ log_format json_escaped escape=json
   '}';
 '''
 
+
+HTTP_HASH_CONFIG = '''
+server_names_hash_bucket_size 128;
+server_names_hash_max_size 4096;
+'''
+
 CONFIG_PARSE_REGEX = re.compile(r'^([A-Z])(\d+)_(.+)$')
 
 
@@ -242,6 +248,7 @@ def get_default_conf(certs_path, env):
     assert len(domains) > 0, "At least one domain configuration is required"
     assert len(origins) == 1, "Exactly one origin configuration is required"
     return "\n".join([
+        HTTP_HASH_CONFIG,
         *get_domains_server_configs(domains, certs_path, tenant_name, domain_access_log_config),
         get_origin_server_config(origins[0], tenant_name),
         get_metrics_server_config()
