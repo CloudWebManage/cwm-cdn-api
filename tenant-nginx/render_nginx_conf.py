@@ -594,7 +594,10 @@ def get_default_conf(certs_path, env):
     return "\n".join([
         HTTP_HASH_CONFIG,
         *get_domains_server_configs(domains, certs_path, tenant_name, domain_access_log_config),
-        get_origin_server_config(origins, tenant_name, env.get("NGINX_RESOLVER_CONFIG", "")),
+        get_origin_server_config(origins, tenant_name, env.get(
+            "NGINX_RESOLVER_CONFIG",
+            "resolver 8.8.8.8 ipv6=off;"
+        )),
         get_metrics_server_config()
     ])
 
