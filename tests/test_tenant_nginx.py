@@ -306,7 +306,7 @@ def test_normalize_origin_defaults(tenant_nginx_entrypoint):
     }
 
 
-def assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, access_log_config='access_log off;'):
+def assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, access_log_config='access_log off;', nginx_resolver_config=''):
     assert_domain_server_config(0, certs_path, TEST_DOMAIN0["D0_CERT"], TEST_DOMAIN0["D0_KEY"])
     lua_origins = tenant_nginx_entrypoint.origins_to_lua([
         tenant_nginx_entrypoint.normalize_origin({"URL": TEST_ORIGIN0["O0_URL"]}, 0, 1)
@@ -319,7 +319,7 @@ def assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, 
             "__TENANT_NAME__": TEST_TENANT_NAME,
             "__ORIGINS_LUA__": lua_origins,
             "__PROXY_NEXT_UPSTREAM_TRIES__": "1",
-            "__NGINX_RESOLVER_CONFIG__": "",
+            "__NGINX_RESOLVER_CONFIG__": nginx_resolver_config,
             "__LOCATION_NGINX_CONFIG__": "",
             "__SERVER_NGINX_CONFIG__": "",
         }),
@@ -334,6 +334,7 @@ def test_get_default_conf(tenant_nginx_entrypoint, tmpdir):
         "TENANT_NAME": tenant_name,
         "WORKER_PROCESSES": "2",
         "PATH": "/usr/sbin:/bin",
+        "NGINX_RESOLVER_CONFIG": "resolver 127.0.0.53 valid=30s;",
     }
     with pytest.raises(Exception, match="At least one domain configuration is required"):
         tenant_nginx_entrypoint.get_default_conf(certs_path, env)
@@ -350,7 +351,7 @@ def test_get_default_conf(tenant_nginx_entrypoint, tmpdir):
     tenant_nginx_entrypoint.get_default_conf(certs_path, env)
     env.pop("O1_URL")
     default_conf = tenant_nginx_entrypoint.get_default_conf(certs_path, env)
-    assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path)
+    assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, nginx_resolver_config=env["NGINX_RESOLVER_CONFIG"])
     assert "server_names_hash_bucket_size 128;" in default_conf
     assert "server_names_hash_max_size 4096;" in default_conf
 
@@ -367,10 +368,11 @@ def test_main(tenant_nginx_entrypoint, tmpdir, extraenv, assertkwargs):
     nginx_path = os.path.join(tmpdir, 'nginx')
     os.makedirs(os.path.join(nginx_path, 'conf.d'), exist_ok=True)
     certs_path = os.path.join(tmpdir, 'certs')
-    tenant_nginx_entrypoint.main(nginx_path, certs_path, {**TEST_TENANT, **TEST_DOMAIN0, **TEST_ORIGIN0, **extraenv})
+    nginx_resolver_config = "resolver 127.0.0.53 valid=30s;"
+    tenant_nginx_entrypoint.main(nginx_path, certs_path, {**TEST_TENANT, **TEST_DOMAIN0, **TEST_ORIGIN0, "NGINX_RESOLVER_CONFIG": nginx_resolver_config, **extraenv})
     with open(os.path.join(nginx_path, "conf.d/default.conf")) as f:
         default_conf = f.read()
-    assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, **assertkwargs)
+    assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, nginx_resolver_config=nginx_resolver_config, **assertkwargs)
 
 
 def assert_curl_issuer(hostname, expected_output, expected_issuer, *args):

@@ -60,6 +60,7 @@ DOMAIN_HTTP_PROXY_LOCATION_CONFIG_TEMPLATE = '''
 
 
 ORIGINS_CONF_TEMPLATE = '''
+__NGINX_RESOLVER_CONFIG__
 lua_shared_dict origin_health 10m;
 include /etc/nginx/metrics_shared_dict.conf;
 
@@ -177,7 +178,6 @@ upstream tenant_origin_upstream {
 server {
     listen 80 default_server;
     server_name  _;
-    __NGINX_RESOLVER_CONFIG__
     __SERVER_NGINX_CONFIG__
 
     set $origin_index "";
