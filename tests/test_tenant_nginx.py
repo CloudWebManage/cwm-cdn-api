@@ -215,16 +215,19 @@ def test_get_url_host_scheme(tenant_nginx_entrypoint, url, expected_host, expect
 def test_get_origin_server_config(tenant_nginx_entrypoint):
     tenant_name = "tenant1"
     with pytest.raises(AssertionError, match="URL must be set in the origin configuration"):
-        tenant_nginx_entrypoint.get_origin_server_config({}, tenant_name)
+        tenant_nginx_entrypoint.get_origin_server_config([{}], tenant_name)
     origin = {
         "URL": "http://origin.example.com",
     }
-    server_config = tenant_nginx_entrypoint.get_origin_server_config(origin, tenant_name)
+    server_config = tenant_nginx_entrypoint.get_origin_server_config([origin], tenant_name)
+    lua_origins = tenant_nginx_entrypoint.origins_to_lua([
+        tenant_nginx_entrypoint.normalize_origin(origin, 0, 1)
+    ])
     assert server_config == tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.ORIGINS_CONF_TEMPLATE, {
         "__TENANT_NAME__": tenant_name,
-        "__ORIGIN_URL__": "http://origin.example.com",
-        "__ORIGIN_URL_HOST__": "origin.example.com",
-        "__ORIGIN_URL_SCHEME__": "http",
+        "__ORIGINS_LUA__": lua_origins,
+        "__PROXY_NEXT_UPSTREAM_TRIES__": "1",
+        "__NGINX_RESOLVER_CONFIG__": "",
         "__LOCATION_NGINX_CONFIG__": "",
         "__SERVER_NGINX_CONFIG__": "",
     })
@@ -233,25 +236,94 @@ def test_get_origin_server_config(tenant_nginx_entrypoint):
         "FOO": "bar",
     }
     with pytest.raises(AssertionError, match="Unknown origin configuration keys: FOO"):
-        tenant_nginx_entrypoint.get_origin_server_config(origin, tenant_name)
+        tenant_nginx_entrypoint.get_origin_server_config([origin], tenant_name)
 
 
-def assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, access_log_config='access_log off;'):
+def test_get_origin_server_config_multiple_origins(tenant_nginx_entrypoint):
+    origins = [
+        {
+            "URL": "http://origin-a.example.com:8080",
+            "NAME": "origin-a",
+            "WEIGHT": "2",
+            "HEALTHCHECK_PATH": "/healthz",
+            "HEALTHCHECK_EXPECTEDSTATUS": "204",
+            "HEALTHCHECK_INTERVAL": "5s",
+            "HEALTHCHECK_TIMEOUT": "500ms",
+            "HEALTHCHECK_HEALTHYTHRESHOLD": "1",
+            "HEALTHCHECK_UNHEALTHYTHRESHOLD": "2",
+        },
+        {
+            "URL": "https://origin-b.example.com",
+            "NAME": "origin-b",
+            "WEIGHT": "1",
+            "HEALTHCHECK_ENABLED": "false",
+        },
+    ]
+    server_config = tenant_nginx_entrypoint.get_origin_server_config(origins, "tenant1")
+    assert "lua_shared_dict origin_health" in server_config
+    assert "balancer_by_lua_block" in server_config
+    assert "server 0.0.0.1 max_fails=1 fail_timeout=10s;" in server_config
+    assert "proxy_next_upstream error timeout http_500 http_502 http_503 http_504;" in server_config
+    assert 'name="origin-a"' in server_config
+    assert 'host="origin-a.example.com"' in server_config
+    assert 'host_header="origin-a.example.com:8080"' in server_config
+    assert 'weight=2' in server_config
+    assert 'path="/healthz"' in server_config
+    assert 'expected_status=204' in server_config
+    assert 'timeout=0.5' in server_config
+    assert 'name="origin-b"' in server_config
+    assert 'enabled=false' in server_config
+
+
+def test_get_origin_server_config_preserves_single_origin_path_prefix(tenant_nginx_entrypoint):
+    server_config = tenant_nginx_entrypoint.get_origin_server_config([
+        {"URL": "https://origin.example.com/base"},
+    ], "tenant1")
+    assert 'request_uri_prefix="/base"' in server_config
+    assert "proxy_pass https://tenant_origin_upstream$origin_request_uri;" in server_config
+
+
+def test_get_origin_server_config_rejects_path_prefixed_multi_origin(tenant_nginx_entrypoint):
+    with pytest.raises(AssertionError, match="Path-prefixed origin URLs are not supported with multiple origins"):
+        tenant_nginx_entrypoint.get_origin_server_config([
+            {"URL": "https://origin-a.example.com/path"},
+            {"URL": "https://origin-b.example.com"},
+        ], "tenant1")
+
+
+def test_normalize_origin_defaults(tenant_nginx_entrypoint):
+    origin = tenant_nginx_entrypoint.normalize_origin({"URL": "https://origin.example.com"}, 3, 1)
+    assert origin["name"] == "origin-3"
+    assert origin["weight"] == 1
+    assert origin["health"] == {
+        "enabled": True,
+        "path": "/",
+        "expected_status": 200,
+        "interval": 10,
+        "timeout": 2,
+        "healthy_threshold": 2,
+        "unhealthy_threshold": 3,
+    }
+
+
+def assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, access_log_config='access_log off;', nginx_resolver_config=''):
     assert_domain_server_config(0, certs_path, TEST_DOMAIN0["D0_CERT"], TEST_DOMAIN0["D0_KEY"])
-    host, scheme = tenant_nginx_entrypoint.get_url_host_scheme(TEST_ORIGIN0["O0_URL"])
+    lua_origins = tenant_nginx_entrypoint.origins_to_lua([
+        tenant_nginx_entrypoint.normalize_origin({"URL": TEST_ORIGIN0["O0_URL"]}, 0, 1)
+    ])
     assert default_conf == "\n".join([
         tenant_nginx_entrypoint.HTTP_HASH_CONFIG,
         tenant_nginx_entrypoint.JSON_ESCAPED_LOG_FORMAT,
         expected_domain_server_config(tenant_nginx_entrypoint, 0, certs_path, TEST_DOMAIN0["D0_NAME"], TEST_TENANT_NAME, access_log_config),
         tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.ORIGINS_CONF_TEMPLATE, {
             "__TENANT_NAME__": TEST_TENANT_NAME,
-            "__ORIGIN_URL__": TEST_ORIGIN0["O0_URL"],
-            "__ORIGIN_URL_HOST__": host,
-            "__ORIGIN_URL_SCHEME__": scheme,
+            "__ORIGINS_LUA__": lua_origins,
+            "__PROXY_NEXT_UPSTREAM_TRIES__": "1",
+            "__NGINX_RESOLVER_CONFIG__": nginx_resolver_config,
             "__LOCATION_NGINX_CONFIG__": "",
             "__SERVER_NGINX_CONFIG__": "",
         }),
-        "include /etc/nginx/metrics.conf;",
+        tenant_nginx_entrypoint.get_metrics_server_config(),
     ])
 
 
@@ -262,21 +334,24 @@ def test_get_default_conf(tenant_nginx_entrypoint, tmpdir):
         "TENANT_NAME": tenant_name,
         "WORKER_PROCESSES": "2",
         "PATH": "/usr/sbin:/bin",
+        "NGINX_RESOLVER_CONFIG": "resolver 127.0.0.53 valid=30s;",
     }
     with pytest.raises(Exception, match="At least one domain configuration is required"):
         tenant_nginx_entrypoint.get_default_conf(certs_path, env)
     env.update(TEST_DOMAIN0)
-    with pytest.raises(Exception, match="Exactly one origin configuration is required"):
+    with pytest.raises(Exception, match="At least one origin configuration is required"):
         tenant_nginx_entrypoint.get_default_conf(certs_path, env)
     env.update({
         **TEST_ORIGIN0,
-        "O1_URL": "http://another-origin.example.com",
+        "O1_URL": "http://another-origin.example.com/path-prefix",
     })
-    with pytest.raises(Exception, match="Exactly one origin configuration is required"):
+    with pytest.raises(Exception, match="Path-prefixed origin URLs are not supported with multiple origins"):
         tenant_nginx_entrypoint.get_default_conf(certs_path, env)
+    env["O1_URL"] = "http://another-origin.example.com"
+    tenant_nginx_entrypoint.get_default_conf(certs_path, env)
     env.pop("O1_URL")
     default_conf = tenant_nginx_entrypoint.get_default_conf(certs_path, env)
-    assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path)
+    assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, nginx_resolver_config=env["NGINX_RESOLVER_CONFIG"])
     assert "server_names_hash_bucket_size 128;" in default_conf
     assert "server_names_hash_max_size 4096;" in default_conf
 
@@ -293,16 +368,18 @@ def test_main(tenant_nginx_entrypoint, tmpdir, extraenv, assertkwargs):
     nginx_path = os.path.join(tmpdir, 'nginx')
     os.makedirs(os.path.join(nginx_path, 'conf.d'), exist_ok=True)
     certs_path = os.path.join(tmpdir, 'certs')
-    tenant_nginx_entrypoint.main(nginx_path, certs_path, {**TEST_TENANT, **TEST_DOMAIN0, **TEST_ORIGIN0, **extraenv})
+    nginx_resolver_config = "resolver 127.0.0.53 valid=30s;"
+    tenant_nginx_entrypoint.main(nginx_path, certs_path, {**TEST_TENANT, **TEST_DOMAIN0, **TEST_ORIGIN0, "NGINX_RESOLVER_CONFIG": nginx_resolver_config, **extraenv})
     with open(os.path.join(nginx_path, "conf.d/default.conf")) as f:
         default_conf = f.read()
-    assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, **assertkwargs)
+    assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, nginx_resolver_config=nginx_resolver_config, **assertkwargs)
 
 
 def assert_curl_issuer(hostname, expected_output, expected_issuer, *args):
+    docker_host_addr = os.getenv("E2E_DOCKER_HOST_ADDR", "127.0.0.1")
     p = subprocess.Popen([
         "curl", "-kv",
-        "--resolve", f"{hostname}:58443:127.0.0.1",
+        "--resolve", f"{hostname}:58443:{docker_host_addr}",
         "-H", f"Host: {hostname}",
         f"https://{hostname}:58443",
         *args
@@ -351,8 +428,9 @@ def test_e2e(testconf):
         assert_curl_issuer("test2.aaa.bbb", "cache-router", "test2.aaa.bbb")
         assert_curl_issuer("test1.example.com", "origin", "test1.example.com", "-X", "POST")
         assert_curl_issuer("test2.aaa.bbb", "origin", "test2.aaa.bbb", "-X", "DELETE")
-        assert subprocess.getstatusoutput("curl -s http://localhost:58080") == (0, "origin")
-        assert subprocess.getstatusoutput("curl -s http://localhost:58080 -X POST") == (0, "origin")
+        docker_host_addr = os.getenv("E2E_DOCKER_HOST_ADDR", "localhost")
+        assert subprocess.getstatusoutput(f"curl -s http://{docker_host_addr}:58080") == (0, "origin")
+        assert subprocess.getstatusoutput(f"curl -s http://{docker_host_addr}:58080 -X POST") == (0, "origin")
         if testconf.get("access_logs"):
             got_it = False
             for i in range(60):

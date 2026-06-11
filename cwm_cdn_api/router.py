@@ -107,3 +107,17 @@ async def reserved_names():
 @router.get('/components-status')
 async def components_status():
     return await api.components_status()
+
+
+@router.get('/origins-health')
+async def origins_health(cdn_tenant_name: str):
+    success, origins = await api.origins_health(cdn_tenant_name)
+    return ORJSONResponse(
+        status_code=200 if success else 400,
+        content={
+            "success": success,
+            "tenant": cdn_tenant_name,
+            "origins": origins if success else [],
+            "msg": None if success else origins,
+        }
+    )

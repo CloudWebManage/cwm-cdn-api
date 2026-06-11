@@ -21,7 +21,9 @@ services:
       - cache-router
       - origin
     restart: unless-stopped
-    build: ../tenant-nginx
+    build:
+      context: ..
+      dockerfile: tenant-nginx/Dockerfile
     ports:
       - "58080:80"
       - "58443:443"

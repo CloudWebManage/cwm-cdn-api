@@ -58,10 +58,11 @@ def test_main(tmpdir, cache_nginx_entrypoint):
 
 
 def assert_curl_cache_server(tenant_name, expected_output, expected_cache_server):
+    docker_host_addr = os.getenv("E2E_DOCKER_HOST_ADDR", "localhost")
     p = subprocess.Popen([
         "curl", "-v",
         "-H", f"X-CWMCDN-TENANT-NAME: {tenant_name}",
-        f"http://localhost:48180"
+        f"http://{docker_host_addr}:48180"
     ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     assert p.wait() == 0
     assert p.stdout.read().decode().strip() == expected_output
