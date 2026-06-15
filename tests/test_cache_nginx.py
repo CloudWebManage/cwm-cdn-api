@@ -41,8 +41,33 @@ def test_get_default_conf_cache(cache_nginx_entrypoint):
             "__NGINX_LOCATION_CONFIGS__": "",
             "__NGINX_RESOLVER_CONFIG__": cache_nginx_entrypoint.DEFAULT_NGINX_RESOLVER_CONFIG,
             "__TENANT_PROXY_PASS_DOMAIN__": cache_nginx_entrypoint.DEFAULT_TENANT_PROXY_PASS_DOMAIN,
+            "__PURGE_RUNTIME_HTTP_CONFIG__": "",
+            "__PURGE_RUNTIME_ADMIN_SERVER_CONFIG__": "",
+            "__PURGE_RUNTIME_SERVER_CONFIG__": "",
+            "__PURGE_RUNTIME_LOCATION_CONFIG__": "",
         }
     )
+
+
+def test_get_default_conf_cache_with_purge_runtime(cache_nginx_entrypoint):
+    conf = cache_nginx_entrypoint.get_default_conf({
+        "TYPE": "cache",
+        "ENABLE_PURGE_RUNTIME": "true",
+        "CWMCDN_CACHE_ADMIN_PORT": "8081",
+        "CWMCDN_CACHE_ADMIN_TOKEN": "secret",
+    })
+    assert "lua_shared_dict cwmcdn_purge" in conf
+    assert "listen       8081;" in conf
+    assert "location = /internal/purge" in conf
+    assert 'local token = "secret"' in conf
+    assert "cache admin token is not configured" in conf
+    assert "local function select_newer_token" in conf
+    assert "select_newer_token(dict:get(tenant .. \"|everything|\"))" in conf
+    assert "dict:get_keys(0)" in conf
+    assert "set $cwmcdn_purge_token \"\";" in conf
+    assert "X-CWMCDN-Purge-Token" not in conf
+    assert "header_filter_by_lua_block" in conf
+    assert "selectorsApplied" in conf
 
 
 def test_main(tmpdir, cache_nginx_entrypoint):

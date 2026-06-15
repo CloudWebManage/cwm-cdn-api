@@ -23,6 +23,6 @@ COPY tenant-nginx/render_nginx_conf.py /srv/
 COPY tenant-nginx/render_vector_config.py /srv/
 COPY tenant-nginx/supervisord.conf /srv/
 COPY tenant-nginx/vector.template.yaml /srv/
-COPY lua/origin_balancer.lua lua/origin_health.lua /usr/local/openresty/lualib/
-RUN chmod 0644 /usr/local/openresty/lualib/origin_balancer.lua /usr/local/openresty/lualib/origin_health.lua
+COPY lua/origin_balancer.lua lua/origin_health.lua lua/cwm_policy.lua /usr/local/openresty/lualib/
+RUN chmod 0644 /usr/local/openresty/lualib/origin_balancer.lua /usr/local/openresty/lualib/origin_health.lua /usr/local/openresty/lualib/cwm_policy.lua
 ENTRYPOINT ["/srv/entrypoint.sh"]
