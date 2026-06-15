@@ -537,6 +537,13 @@ def validate_no_raw_policy_keys(value, context="policy"):
             validate_no_raw_policy_keys(child, f"{context}[{i}]")
 
 
+def optional_policy_list(value, context):
+    if value is None:
+        return []
+    assert isinstance(value, list), f"Invalid {context}: expected list"
+    return value
+
+
 def get_policy_configs(policy, env=None):
     if not policy:
         return "", "", ""
@@ -556,23 +563,23 @@ def get_policy_configs(policy, env=None):
     ip_access = security.get("ipAccess") or {}
     if (ip_access.get("allowCidrs") or ip_access.get("blockCidrs")) and not trusted_client_ip_enabled(source_env):
         raise AssertionError("security.ipAccess requires trusted client IP support to be enabled")
-    for cidr in ip_access.get("blockCidrs", []):
+    for cidr in optional_policy_list(ip_access.get("blockCidrs"), "security.ipAccess.blockCidrs"):
         validate_cidr(cidr)
         location_lines.append(f"deny {cidr};")
     if ip_access.get("allowCidrs"):
-        for cidr in ip_access.get("allowCidrs", []):
+        for cidr in optional_policy_list(ip_access.get("allowCidrs"), "security.ipAccess.allowCidrs"):
             validate_cidr(cidr)
             location_lines.append(f"allow {cidr};")
         location_lines.append("deny all;")
     methods = security.get("methods") or {}
-    for method in methods.get("block", []):
+    for method in optional_policy_list(methods.get("block"), "security.methods.block"):
         assert re.match(r"^[A-Z]+$", method), f"Invalid blocked method: {method}"
         location_lines.append(f"if ($request_method = {method}) {{ return 403; }}")
     if methods.get("allow"):
         allowed = "|".join(re.escape(method) for method in methods["allow"])
         location_lines.append(f"if ($request_method !~ ^({allowed})$) {{ return 403; }}")
     urls = security.get("urls") or {}
-    for rule in urls.get("block", []):
+    for rule in optional_policy_list(urls.get("block"), "security.urls.block"):
         match = rule.get("match") or {}
         assert match.get("type") == "glob", "Only glob URL block rules are supported"
         location_lines.append(f"if ($uri ~ {glob_to_nginx_regex(match.get('path'))}) {{ return 403; }}")
@@ -596,11 +603,11 @@ def get_policy_configs(policy, env=None):
             "__CAPTCHA_SIGNING_KEY_PATH_JSON__": json.dumps(source_env.get("CAPTCHA_SIGNING_KEY_PATH", "")),
         }))
         access_runtime_required = True
-        for rule in captcha.get("rules", []):
+        for rule in optional_policy_list(captcha.get("rules"), "captcha.rules"):
             match = rule.get("match") or {}
             assert match.get("type") == "glob", "Only glob captcha rules are supported"
             glob_to_nginx_regex(match.get('path'))
-    for redirect in policy.get("redirects", []):
+    for redirect in optional_policy_list(policy.get("redirects"), "redirects"):
         if redirect.get("enabled", True) is False:
             continue
         when = redirect.get("when") or {}

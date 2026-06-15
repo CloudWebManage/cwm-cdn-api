@@ -517,6 +517,24 @@ def test_policy_renderer_preserve_query_with_existing_query(tenant_nginx_entrypo
     assert "return 302 /new/?fixed=1&$args;" in location_config
 
 
+def test_policy_renderer_treats_null_optional_lists_as_empty(tenant_nginx_entrypoint):
+    server_config, location_config, extra_locations = tenant_nginx_entrypoint.get_policy_configs({
+        "security": {
+            "ipAccess": {"allowCidrs": None, "blockCidrs": None},
+            "methods": {"block": None},
+            "urls": {"block": None},
+        },
+        "captcha": {"rules": None},
+        "redirects": None,
+    })
+    assert (server_config, location_config, extra_locations) == ("", "", "")
+
+
+def test_policy_renderer_rejects_non_list_optional_lists(tenant_nginx_entrypoint):
+    with pytest.raises(AssertionError, match="Invalid redirects: expected list"):
+        tenant_nginx_entrypoint.get_policy_configs({"redirects": {}})
+
+
 def test_policy_renderer_rejects_raw_config(tenant_nginx_entrypoint):
     with pytest.raises(AssertionError, match="Raw config field is not allowed"):
         tenant_nginx_entrypoint.get_policy_configs({"security": {"nginxConfig": "return 200;"}})
