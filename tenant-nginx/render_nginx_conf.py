@@ -912,8 +912,10 @@ def get_default_conf(certs_path, env):
 
 
 def main(nginx_conf_path="/etc/nginx", certs_path="/certs", env=None):
+    default_conf = get_default_conf(certs_path, env or os.environ)
+    print(default_conf)
     with open(os.path.join(nginx_conf_path, "conf.d/default.conf"), "w") as f:
-        f.write(get_default_conf(certs_path, env or os.environ))
+        f.write(default_conf)
 
 
 if __name__ == "__main__":
