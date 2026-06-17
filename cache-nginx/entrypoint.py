@@ -54,6 +54,7 @@ server {
 PURGE_RUNTIME_HTTP_CONFIG_TEMPLATE = r'''
 lua_shared_dict cwmcdn_purge 20m;
 init_worker_by_lua_block {
+  __NGINX_INIT_WORKER_BY_LUA_BLOCK__
   local path = __PURGE_INDEX_PATH_JSON__
   local dict = ngx.shared.cwmcdn_purge
   local file = io.open(path, "r")
@@ -240,6 +241,7 @@ def get_common_replace_keys(env):
         "__NGINX_HTTP_CONFIGS__": env.get('NGINX_HTTP_CONFIGS') or "",
         "__NGINX_SERVER_CONFIGS__": env.get('NGINX_SERVER_CONFIGS') or "",
         "__NGINX_LOCATION_CONFIGS__": env.get('NGINX_LOCATION_CONFIGS') or "",
+        "__NGINX_INIT_WORKER_BY_LUA_BLOCK__": env.get('NGINX_INIT_WORKER_BY_LUA_BLOCK') or "",
     }
 
 
