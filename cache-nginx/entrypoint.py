@@ -226,8 +226,10 @@ PURGE_RUNTIME_LOCATION_CONFIG = r'''
 
 def replace_keys(base, d):
     out = base
-    for k, v in d.items():
-        out = out.replace(k, v)
+    # we make several passes to catch replacement keys within other generated values
+    for i in range(10):
+        for k, v in d.items():
+            out = out.replace(k, v)
     return out
 
 
