@@ -56,7 +56,7 @@ def test_validate_security_captcha_redirect_policy(monkeypatch):
             "enabled": True,
             "provider": "turnstile",
             "siteKey": "site",
-            "secretRef": {"name": "turnstile", "key": "secret"},
+            "secret": "secret",
             "cookieTtl": "10m",
             "rules": [{"name": "protected", "match": {"type": "glob", "path": "/protected/*"}}],
         },
