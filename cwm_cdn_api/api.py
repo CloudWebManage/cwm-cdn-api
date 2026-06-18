@@ -2,17 +2,18 @@ import os
 import re
 import subprocess
 import tempfile
+from datetime import datetime, timezone
 from copy import deepcopy
 import time
 import asyncio
-from datetime import datetime, timezone
 from urllib.parse import urlsplit, urlunsplit
 
 import orjson
 import requests
 
 from .common import async_subprocess_check_output, async_subprocess_status_output
-from .config import NAMESPACE, ALLOWED_PRIMARY_KEY, IS_PRIMARY
+from .config import NAMESPACE, ALLOWED_PRIMARY_KEY, IS_PRIMARY, POP_ID
+from .validation import validate_tenant_spec
 
 
 FORBIDDEN_TENANT_FIELDS = {
@@ -235,6 +236,36 @@ def _redacted_domain(domain, tls_status_by_name):
     return redacted
 
 
+def _sanitize_secondary_sync(statuses):
+    if not isinstance(statuses, list):
+        return []
+    allowed = {
+        'name', 'status', 'desiredHash', 'syncedHash', 'lastAttemptTime',
+        'lastSuccessTime', 'lastError', 'latencySeconds', 'observedGeneration',
+    }
+    sanitized = []
+    for status in statuses:
+        if not isinstance(status, dict):
+            continue
+        item = {key: status[key] for key in allowed if key in status}
+        if 'latencySeconds' in item and isinstance(item['latencySeconds'], str):
+            try:
+                item['latencySeconds'] = float(item['latencySeconds'])
+            except ValueError:
+                pass
+        if status.get('url'):
+            parsed = urlsplit(status['url'])
+            if parsed.scheme and parsed.hostname:
+                host = parsed.hostname
+                if parsed.port:
+                    host = f'{host}:{parsed.port}'
+                item['target'] = urlunsplit((parsed.scheme, host, '', '', ''))
+            else:
+                item['target'] = status['url']
+        sanitized.append(item)
+    return sanitized
+
+
 def certificate_resource_details(name, spec):
     details = []
     for i, domain in enumerate(spec.get('domains', [])):
@@ -262,15 +293,19 @@ def validate_admin_primary_key(primary_key):
 
 
 async def apply(name, spec):
-    await validate_name(name)
     spec = deepcopy(spec)
     primary_key = spec.pop("primaryKey", "")
+    if not IS_PRIMARY and (not ALLOWED_PRIMARY_KEY or not primary_key or primary_key != ALLOWED_PRIMARY_KEY):
+        return False, 'Updates are not allowed on this instance'
+    await validate_name(name)
     try:
         validate_origins(spec.get("origins", []))
     except ValueError as e:
         return False, str(e)
-    if not IS_PRIMARY and primary_key != ALLOWED_PRIMARY_KEY:
-        return False, 'Updates are not allowed on this instance'
+    try:
+        validate_tenant_spec(spec)
+    except ValueError as exc:
+        return False, str(exc)
     try:
         validate_spec(spec)
     except ValueError as e:
@@ -295,7 +330,7 @@ async def apply(name, spec):
 
 
 async def delete(name, primary_key=""):
-    if not IS_PRIMARY and primary_key != ALLOWED_PRIMARY_KEY:
+    if not IS_PRIMARY and (not ALLOWED_PRIMARY_KEY or not primary_key or primary_key != ALLOWED_PRIMARY_KEY):
         return False, 'Deletes are not allowed on this instance'
     status, output = await async_subprocess_status_output(
         'kubectl', 'delete', 'cdntenant.cdn.cloudwm-cdn.com', name, '-n', NAMESPACE, '--wait=false',
@@ -321,6 +356,7 @@ async def get(name):
             and conditions.get("Ready", {}).get("status") == "True"
             and conditions.get("Degraded", {}).get("status") == "False"
         )
+        secondary_sync = _sanitize_secondary_sync(o.get('status', {}).get('secondarySync')) if IS_PRIMARY else None
         tls_status_by_name = {
             status['name']: status for status in o.get('status', {}).get('domainTLS', [])
         }
@@ -332,9 +368,20 @@ async def get(name):
             'domainTLS': o.get('status', {}).get('domainTLS', []),
             'ready': ready,
             'conditions': conditions,
+            **({'secondarySync': secondary_sync} if secondary_sync is not None else {}),
         }
     else:
         return False, output
+
+
+async def get_tenant_object(name):
+    status, output = await async_subprocess_status_output(
+        'kubectl', 'get', 'cdntenant.cdn.cloudwm-cdn.com', name, '-n', NAMESPACE, '-o', 'json',
+        stderr=subprocess.STDOUT
+    )
+    if status != 0:
+        return False, output
+    return True, orjson.loads(output)
 
 
 async def debug_certificates(name, primary_key):
@@ -391,11 +438,54 @@ def parse_pod_status(pod):
     image = pod['spec']['containers'][0]['image']
     image_tag = image.split(':')[-1] if ':' in image else 'latest'
     status_phase = pod['status']['phase']
+    ready = False
+    for condition in pod.get('status', {}).get('conditions', []):
+        if condition.get('type') == 'Ready':
+            ready = condition.get('status') == 'True'
     return {
         'creation_timestamp': creation_timestamp,
         'image_tag': image_tag,
         'status_phase': status_phase,
+        'ready': ready,
     }
+
+
+def _check_from_pods(name, pods, expected_min=1, severity='critical'):
+    ready = sum(1 for pod in pods if pod.get('ready'))
+    total = len(pods)
+    if total == 0:
+        status = 'unhealthy'
+    elif ready >= expected_min:
+        status = 'healthy'
+    elif ready > 0:
+        status = 'degraded'
+    else:
+        status = 'unhealthy'
+    return {
+        'name': name,
+        'status': status,
+        'severity': severity,
+        'message': f'{ready}/{total} pods ready',
+        'observedAt': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+    }
+
+
+def _rollup_pop_health(checks):
+    if not checks:
+        return 'unknown'
+    if any(check['status'] == 'unknown' for check in checks):
+        return 'unknown'
+    if any(check['severity'] == 'critical' and check['status'] == 'unhealthy' for check in checks):
+        return 'unhealthy'
+    if any(check['status'] in ('degraded', 'unhealthy') for check in checks):
+        return 'degraded'
+    return 'healthy'
+
+
+async def _get_pods(namespace):
+    return orjson.loads(await async_subprocess_check_output(
+        'kubectl', '-n', namespace, 'get', 'pods', '-o', 'json'
+    ))['items']
 
 
 async def components_status():
@@ -404,16 +494,51 @@ async def components_status():
         'edge': {},
         'operator': [],
     }
-    for pod in orjson.loads(await async_subprocess_check_output(
-        'kubectl', '-n', 'cdn-cache', 'get', 'pods', '-o', 'json'
-    ))['items']:
-        res['cache'].setdefault(pod['metadata']['name'].split('-')[0], []).append(parse_pod_status(pod))
-    for pod in orjson.loads(await async_subprocess_check_output(
-        'kubectl', '-n', 'cdn-edge', 'get', 'pods', '-o', 'json'
-    ))['items']:
-        res['edge'].setdefault(pod['metadata']['name'].split('-')[2], []).append(parse_pod_status(pod))
-    for pod in orjson.loads(await async_subprocess_check_output(
-        'kubectl', '-n', 'cwm-cdn-operator-system', 'get', 'pods', '-o', 'json'
-    ))['items']:
-        res['operator'].append(parse_pod_status(pod))
+    checks = []
+    evaluated_at = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    try:
+        cache_pods = await _get_pods('cdn-cache')
+        for pod in cache_pods:
+            res['cache'].setdefault(pod['metadata']['name'].split('-')[0], []).append(parse_pod_status(pod))
+        cache_router = res['cache'].get('router', [])
+        cache_shards = [pod for name, pods in res['cache'].items() if name.startswith('cache') for pod in pods]
+        checks.append(_check_from_pods('cache-router-ready', cache_router, severity='critical'))
+        checks.append(_check_from_pods('cache-shards-ready', cache_shards, severity='warning'))
+    except Exception as exc:
+        checks.append({
+            'name': 'cache-kubernetes-api', 'status': 'unknown', 'severity': 'critical',
+            'message': str(exc), 'observedAt': evaluated_at,
+        })
+    try:
+        edge_pods = await _get_pods('cdn-edge')
+        for pod in edge_pods:
+            res['edge'].setdefault(pod['metadata']['name'].split('-')[2], []).append(parse_pod_status(pod))
+        for component in ('nginx', 'coredns', 'zonewriter'):
+            checks.append(_check_from_pods(f'edge-{component}-ready', res['edge'].get(component, []), severity='critical'))
+    except Exception as exc:
+        checks.append({
+            'name': 'edge-kubernetes-api', 'status': 'unknown', 'severity': 'critical',
+            'message': str(exc), 'observedAt': evaluated_at,
+        })
+    try:
+        operator_pods = await _get_pods('cwm-cdn-operator-system')
+        for pod in operator_pods:
+            res['operator'].append(parse_pod_status(pod))
+        checks.append(_check_from_pods('operator-ready', res['operator'], severity='critical'))
+    except Exception as exc:
+        checks.append({
+            'name': 'operator-kubernetes-api', 'status': 'unknown', 'severity': 'critical',
+            'message': str(exc), 'observedAt': evaluated_at,
+        })
+    checks.append({
+        'name': 'cdn-api-ready', 'status': 'healthy', 'severity': 'critical',
+        'message': 'CDN API process is serving components-status', 'observedAt': evaluated_at,
+    })
+    res['popHealth'] = {
+        'schemaVersion': 'cdn_pop_health_v1',
+        'popId': POP_ID,
+        'status': _rollup_pop_health(checks),
+        'evaluatedAt': evaluated_at,
+        'checks': checks,
+    }
     return res

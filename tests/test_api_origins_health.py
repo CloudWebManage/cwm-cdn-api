@@ -102,6 +102,7 @@ async def test_apply_rejects_invalid_origin_without_kubectl(monkeypatch):
     async def fail_kubectl(*args, **kwargs):
         raise AssertionError("kubectl should not be called")
 
+    monkeypatch.setattr(api, "IS_PRIMARY", True)
     monkeypatch.setattr(api, "validate_name", fake_validate_name)
     monkeypatch.setattr(api, "async_subprocess_status_output", fail_kubectl)
     success, message = await api.apply("tenant1", {

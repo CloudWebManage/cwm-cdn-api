@@ -105,6 +105,9 @@ def expected_domain_server_config(tenant_nginx_entrypoint, i, certs_path, name, 
         "__TLS_PROTOCOLS__": tls_protocols,
         "__TENANT_NAME__": tenant_name,
         "__SERVER_NGINX_CONFIG__": "",
+        "__EXTRA_LOCATION_NGINX_CONFIG__": "",
+        "__POLICY_LOCATION_NGINX_CONFIG__": "",
+        "__CACHE_ROUTING_NGINX_CONFIG__": tenant_nginx_entrypoint.get_cache_routing_config(tenant_nginx_entrypoint.get_cache_config({}), tenant_name),
         "__LOCATION_NGINX_CONFIG__": "",
         "__CDN_CACHE_ROUTER__": tenant_nginx_entrypoint.CDN_CACHE_ROUTER,
         "__ACCESS_LOG_CONFIG__": access_log_config,
@@ -116,9 +119,13 @@ def expected_domain_server_config(tenant_nginx_entrypoint, i, certs_path, name, 
             "__TENANT_NAME__": tenant_name,
             "__CDN_CACHE_ROUTER__": tenant_nginx_entrypoint.CDN_CACHE_ROUTER,
             "__ACCESS_LOG_CONFIG__": access_log_config,
+            "__POLICY_LOCATION_NGINX_CONFIG__": "",
+            "__CACHE_ROUTING_NGINX_CONFIG__": tenant_nginx_entrypoint.get_cache_routing_config(tenant_nginx_entrypoint.get_cache_config({}), tenant_name),
         }).strip()
     http_config = tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.DOMAIN_HTTP_CONF_TEMPLATE, {
         "__SERVER_NAME__": name,
+        "__SERVER_NGINX_CONFIG__": "",
+        "__EXTRA_LOCATION_NGINX_CONFIG__": "",
         "__ACME_CHALLENGE_ROOT__": tenant_nginx_entrypoint.ACME_CHALLENGE_ROOT,
         "__HTTP_LOCATION_CONFIG__": http_location_config,
     })
@@ -182,7 +189,7 @@ def test_get_domains_server_configs(tmpdir, tenant_nginx_entrypoint):
     assert_domain_server_config(0, certs_path, "cert1", "key1")
     assert_domain_server_config(1, certs_path, "cert2", "key2")
     assert server_configs == [
-        tenant_nginx_entrypoint.JSON_ESCAPED_LOG_FORMAT,
+        tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.JSON_ESCAPED_LOG_FORMAT, {"__TENANT_NAME__": tenant_name, "__POP_ID__": "unknown"}),
         expected_domain_server_config(tenant_nginx_entrypoint, 0, certs_path, "test1.example.com", tenant_name),
         expected_domain_server_config(tenant_nginx_entrypoint, 1, certs_path, "test2.example.com", tenant_name),
     ]
@@ -312,8 +319,9 @@ def assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, 
         tenant_nginx_entrypoint.normalize_origin({"URL": TEST_ORIGIN0["O0_URL"]}, 0, 1)
     ])
     assert default_conf == "\n".join([
+        tenant_nginx_entrypoint.LUA_SSL_CONFIG,
         tenant_nginx_entrypoint.HTTP_HASH_CONFIG,
-        tenant_nginx_entrypoint.JSON_ESCAPED_LOG_FORMAT,
+        tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.JSON_ESCAPED_LOG_FORMAT, {"__TENANT_NAME__": TEST_TENANT_NAME, "__POP_ID__": "unknown"}),
         expected_domain_server_config(tenant_nginx_entrypoint, 0, certs_path, TEST_DOMAIN0["D0_NAME"], TEST_TENANT_NAME, access_log_config),
         tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.ORIGINS_CONF_TEMPLATE, {
             "__TENANT_NAME__": TEST_TENANT_NAME,
@@ -352,14 +360,199 @@ def test_get_default_conf(tenant_nginx_entrypoint, tmpdir):
     env.pop("O1_URL")
     default_conf = tenant_nginx_entrypoint.get_default_conf(certs_path, env)
     assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, nginx_resolver_config=env["NGINX_RESOLVER_CONFIG"])
+    assert "lua_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;" in default_conf
+    assert "lua_ssl_verify_depth 5;" in default_conf
     assert "server_names_hash_bucket_size 128;" in default_conf
     assert "server_names_hash_max_size 4096;" in default_conf
+
+
+def test_cache_env_support_and_disabled_bypass(tenant_nginx_entrypoint, tmpdir):
+    certs_path = os.path.join(tmpdir, "certs")
+    default_conf = tenant_nginx_entrypoint.get_default_conf(certs_path, {
+        **TEST_TENANT,
+        **TEST_DOMAIN0,
+        **TEST_ORIGIN0,
+        "CACHE_ENABLED": "false",
+        "CACHE_STATUS_HEADER": "X-CWM-Cache-Status",
+    })
+    assert "proxy_pass http://127.0.0.1:80;" in default_conf
+    assert "proxy_pass http://router.cdn-cache;" not in default_conf
+    assert "add_header X-CWM-Cache-Status BYPASS always;" in default_conf
+    assert "proxy_set_header X-CWMCDN-Cache-Enabled false;" in default_conf
+
+
+def test_cache_env_headers_overwrite_client_control(tenant_nginx_entrypoint, tmpdir):
+    certs_path = os.path.join(tmpdir, "certs")
+    default_conf = tenant_nginx_entrypoint.get_default_conf(certs_path, {
+        **TEST_TENANT,
+        **TEST_DOMAIN0,
+        **TEST_ORIGIN0,
+        "CACHE_EDGE_TTL_SECONDS": "30",
+        "CACHE_RESPECT_ORIGIN_CACHE_CONTROL": "false",
+        "CACHE_STATUS_HEADER": "X-CWM-Cache-Status",
+    })
+    assert "proxy_set_header X-CWMCDN-Tenant-Name tenant1;" in default_conf
+    assert "proxy_set_header X-CWMCDN-Cache-Edge-TTL-Seconds 30;" in default_conf
+    assert "proxy_set_header X-CWMCDN-Cache-Respect-Origin-Cache-Control false;" in default_conf
+    assert "proxy_set_header X-CWMCDN-Cache-Status-Header X-CWM-Cache-Status;" in default_conf
+    assert "add_header X-CWM-Cache-Status $upstream_http_x_cwm_cache_status always;" in default_conf
+
+
+def test_cache_status_header_can_be_disabled(tenant_nginx_entrypoint, tmpdir):
+    certs_path = os.path.join(tmpdir, "certs")
+    default_conf = tenant_nginx_entrypoint.get_default_conf(certs_path, {
+        **TEST_TENANT,
+        **TEST_DOMAIN0,
+        **TEST_ORIGIN0,
+        "CACHE_STATUS_HEADER": "",
+    })
+    assert "proxy_set_header X-CWMCDN-Cache-Status-Header \"\";" in default_conf
+    assert "add_header X-CWM-Cache-Status" not in default_conf
+
+
+def test_structured_access_log_schema_is_additive(tenant_nginx_entrypoint, tmpdir):
+    certs_path = os.path.join(tmpdir, "certs")
+    default_conf = tenant_nginx_entrypoint.get_default_conf(certs_path, {
+        **TEST_TENANT,
+        **TEST_DOMAIN0,
+        **TEST_ORIGIN0,
+        "POP_ID": "pop-a",
+    })
+    for field in [
+        '"schema_version":"cdn_access_log_v1"',
+        '"pop_id":"pop-a"',
+        '"cdn_layer":"front"',
+        '"accounting_source":true',
+        '"request_path":"$uri"',
+        '"request":"$request"',
+    ]:
+        assert field in default_conf
+
+
+def test_policy_renderer_safe_generated_config_and_policy_runtime(tenant_nginx_entrypoint, tmpdir):
+    certs_path = os.path.join(tmpdir, "certs")
+    policy = {
+        "security": {
+            "ipAccess": {"allowCidrs": ["10.0.0.0/8"], "blockCidrs": ["192.0.2.0/24"]},
+            "request": {"maxBodySize": "1m"},
+            "methods": {"block": ["DELETE"]},
+            "urls": {"block": [{"name": "admin", "match": {"type": "glob", "path": "/admin/*"}}]},
+            "rateLimit": {"enabled": True, "requests": 10, "period": "1m", "burst": 5, "key": "clientIp", "action": "captcha"},
+        },
+        "captcha": {
+            "enabled": True,
+            "provider": "turnstile",
+            "siteKey": "site",
+            "secretRef": {"name": "turnstile", "key": "secret"},
+            "rules": [{"name": "protected", "match": {"type": "glob", "path": "/protected/*"}}],
+        },
+        "redirects": [{
+            "name": "old",
+            "when": {"path": {"type": "glob", "value": "/old/*"}},
+            "to": "/new/",
+            "status": 302,
+            "preserveQuery": True,
+        }, {
+            "name": "missing",
+            "when": {"path": {"type": "glob", "value": "/missing/*"}, "upstreamStatus": [404]},
+            "to": "/new-missing/",
+            "status": 302,
+        }],
+    }
+    default_conf = tenant_nginx_entrypoint.get_default_conf(certs_path, {
+        **TEST_TENANT,
+        **TEST_DOMAIN0,
+        **TEST_ORIGIN0,
+        "TENANT_POLICY_JSON": json.dumps(policy),
+        "CWM_CDN_TRUSTED_CLIENT_IP_ENABLED": "true",
+        "CAPTCHA_SECRET_PATH": "/etc/cwm-cdn/captcha-secret/secret",
+        "CAPTCHA_SIGNING_KEY_PATH": "/etc/cwm-cdn/signing-key/signing-key",
+    })
+    assert "client_max_body_size 1m;" in default_conf
+    assert "deny 192.0.2.0/24;" in default_conf
+    assert "allow 10.0.0.0/8;" in default_conf
+    assert "deny all;" in default_conf
+    assert "if ($request_method = DELETE) { return 403; }" in default_conf
+    assert "if ($uri ~ ^/admin/.*$) { return 403; }" in default_conf
+    assert "location ^~ /__cwmcdn/captcha/" in default_conf
+    assert "cwm_policy.enforce_access" in default_conf
+    assert "cwm_policy.handle_captcha" in default_conf
+    assert 'signing_key_path = "/etc/cwm-cdn/signing-key/signing-key"' in default_conf
+    assert 'os.getenv("CAPTCHA_SIGNING_KEY_PATH")' not in default_conf
+    assert "if ($uri ~ ^/old/.*$) { return 302 /new/$is_args$args; }" in default_conf
+    assert "header_filter_by_lua_block" in default_conf
+    assert "cwm_policy.apply_response_redirect" in default_conf
+    http_server = default_conf.split("listen 80;", 1)[1]
+    assert "client_max_body_size 1m;" in http_server
+    assert "if ($request_method = DELETE) { return 403; }" in http_server
+    assert "if ($uri ~ ^/admin/.*$) { return 403; }" in http_server
+
+
+def test_policy_renderer_hardens_redirect_targets(tenant_nginx_entrypoint):
+    with pytest.raises(AssertionError, match="Invalid policy glob path"):
+        tenant_nginx_entrypoint.get_policy_configs({
+            "security": {"urls": {"block": [{"match": {"type": "glob", "path": "/x; return 200"}}]}},
+        })
+    with pytest.raises(AssertionError, match="Invalid redirect target"):
+        tenant_nginx_entrypoint.get_policy_configs({
+            "redirects": [{"when": {"path": {"type": "glob", "value": "/x"}}, "to": "/y; return 200"}],
+        })
+    _, location_config, _ = tenant_nginx_entrypoint.get_policy_configs({
+        "security": {"rateLimit": {"enabled": True, "requests": 1, "period": "1m", "key": "clientIp", "action": "block"}},
+        "redirects": [{"when": {"path": {"type": "glob", "value": "/x"}, "upstreamStatus": [404]}, "to": "/y"}],
+    }, {"CWM_CDN_TRUSTED_CLIENT_IP_ENABLED": "true"})
+    assert "cwm_policy.enforce_access" in location_config
+    assert "cwm_policy.apply_response_redirect" in location_config
+
+
+def test_captcha_runtime_template_uses_lua_handler(tenant_nginx_entrypoint):
+    _, _, extra_locations = tenant_nginx_entrypoint.get_policy_configs(
+        {"captcha": {"enabled": True, "provider": "turnstile", "siteKey": "site"}},
+        {"CAPTCHA_SECRET_PATH": "/secret", "CAPTCHA_SIGNING_KEY_PATH": "/signing-key"},
+    )
+    assert "cwm_policy.handle_captcha" in extra_locations
+    assert "captcha runtime is not enabled" not in extra_locations
+
+
+def test_policy_renderer_preserve_query_with_existing_query(tenant_nginx_entrypoint):
+    _, location_config, _ = tenant_nginx_entrypoint.get_policy_configs({
+        "redirects": [{"when": {"path": {"type": "glob", "value": "/old/*"}}, "to": "/new/?fixed=1", "preserveQuery": True}],
+    })
+    assert "return 302 /new/?fixed=1&$args;" in location_config
+
+
+def test_policy_renderer_treats_null_optional_lists_as_empty(tenant_nginx_entrypoint):
+    server_config, location_config, extra_locations = tenant_nginx_entrypoint.get_policy_configs({
+        "security": {
+            "ipAccess": {"allowCidrs": None, "blockCidrs": None},
+            "methods": {"block": None},
+            "urls": {"block": None},
+        },
+        "captcha": {"rules": None},
+        "redirects": None,
+    })
+    assert (server_config, location_config, extra_locations) == ("", "", "")
+
+
+def test_policy_renderer_rejects_non_list_optional_lists(tenant_nginx_entrypoint):
+    with pytest.raises(AssertionError, match="Invalid redirects: expected list"):
+        tenant_nginx_entrypoint.get_policy_configs({"redirects": {}})
+
+
+def test_policy_renderer_rejects_raw_config(tenant_nginx_entrypoint):
+    with pytest.raises(AssertionError, match="Raw config field is not allowed"):
+        tenant_nginx_entrypoint.get_policy_configs({"security": {"nginxConfig": "return 200;"}})
 
 
 @pytest.mark.parametrize("extraenv,assertkwargs", [
     ({},{}),
     ({
         "ENABLE_TENANT_ACCESS_LOGS": "true",
+    }, {
+        "access_log_config": 'access_log /var/log/nginx/access.logjson json_escaped;'
+    }),
+    ({
+        "ENABLE_PLATFORM_LOGS": "true",
     }, {
         "access_log_config": 'access_log /var/log/nginx/access.logjson json_escaped;'
     })

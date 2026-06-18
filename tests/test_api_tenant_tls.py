@@ -131,3 +131,37 @@ async def test_get_redacts_secrets_and_returns_domain_tls(monkeypatch):
     assert "cert" not in result["domains"][0]
     assert "key" not in result["domains"][0]
     assert result["domains"][0]["tlsStatus"]["ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_secondary_apply_requires_non_empty_primary_key_before_validation(monkeypatch):
+    async def fail_validate_name(name):
+        raise AssertionError("validate_name should not be called before secondary auth")
+
+    async def fail_kubectl(*args, **kwargs):
+        raise AssertionError("kubectl should not be called")
+
+    monkeypatch.setattr(api, "IS_PRIMARY", False)
+    monkeypatch.setattr(api, "ALLOWED_PRIMARY_KEY", "")
+    monkeypatch.setattr(api, "validate_name", fail_validate_name)
+    monkeypatch.setattr(api, "async_subprocess_status_output", fail_kubectl)
+
+    success, message = await api.apply("tenant1", {"domains": [], "origins": [{"url": "not-a-url"}]})
+
+    assert success is False
+    assert message == "Updates are not allowed on this instance"
+
+
+@pytest.mark.asyncio
+async def test_secondary_delete_requires_non_empty_primary_key(monkeypatch):
+    async def fail_kubectl(*args, **kwargs):
+        raise AssertionError("kubectl should not be called")
+
+    monkeypatch.setattr(api, "IS_PRIMARY", False)
+    monkeypatch.setattr(api, "ALLOWED_PRIMARY_KEY", "")
+    monkeypatch.setattr(api, "async_subprocess_status_output", fail_kubectl)
+
+    success, message = await api.delete("tenant1")
+
+    assert success is False
+    assert message == "Deletes are not allowed on this instance"

@@ -1,12 +1,13 @@
 FROM ghcr.io/cloudwebmanage/cwm-iac-openresty:e20b995cdaf10a22146d2032fc90eec6d3eb1eb6
 RUN apk update &&\
-    apk add --no-cache supervisor logrotate &&\
+    apk add --no-cache supervisor logrotate ca-certificates &&\
     mkdir vector &&\
     curl -sSfL https://packages.timber.io/vector/0.51.1/vector-0.51.1-x86_64-unknown-linux-musl.tar.gz | \
     tar xzf - -C vector --strip-components=2 &&\
     mv vector/bin/vector /usr/local/bin/vector &&\
     rm -rf vector &&\
     mkdir -p /var/vector/data
+RUN opm get ledgetech/lua-resty-http
 RUN if [ ! -f /etc/nginx/metrics_shared_dict.conf ]; then \
         awk '/^lua_shared_dict prometheus_metrics/ { print }' /etc/nginx/metrics.conf > /etc/nginx/metrics_shared_dict.conf; \
     fi && \
@@ -23,6 +24,6 @@ COPY tenant-nginx/render_nginx_conf.py /srv/
 COPY tenant-nginx/render_vector_config.py /srv/
 COPY tenant-nginx/supervisord.conf /srv/
 COPY tenant-nginx/vector.template.yaml /srv/
-COPY lua/origin_balancer.lua lua/origin_health.lua /usr/local/openresty/lualib/
-RUN chmod 0644 /usr/local/openresty/lualib/origin_balancer.lua /usr/local/openresty/lualib/origin_health.lua
+COPY lua/origin_balancer.lua lua/origin_health.lua lua/cwm_policy.lua /usr/local/openresty/lualib/
+RUN chmod 0644 /usr/local/openresty/lualib/origin_balancer.lua /usr/local/openresty/lualib/origin_health.lua /usr/local/openresty/lualib/cwm_policy.lua
 ENTRYPOINT ["/srv/entrypoint.sh"]

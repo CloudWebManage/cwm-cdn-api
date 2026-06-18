@@ -11,7 +11,7 @@ done
 
 python3 /srv/render_nginx_conf.py
 
-if [ "${ENABLE_TENANT_ACCESS_LOGS:-}" == "true" ]; then
+if [[ "${ENABLE_TENANT_ACCESS_LOGS:-}" =~ ^(1|true|yes)$ ]] || [[ "${ENABLE_PLATFORM_LOGS:-}" =~ ^(1|true|yes)$ ]]; then
   mkdir -p /etc/vector /var/log/nginx
   python3 /srv/render_vector_config.py > /etc/vector/vector.yaml
   chmod 600 /srv/logrotate.conf

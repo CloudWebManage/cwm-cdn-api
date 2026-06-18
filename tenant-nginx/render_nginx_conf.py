@@ -1,14 +1,19 @@
 #!/usr/bin/python3
+import json
 import os
 import re
-import json
+import ipaddress
 from copy import deepcopy
 from urllib.parse import urlsplit
 
 
 CDN_CACHE_ROUTER = os.getenv("CDN_CACHE_ROUTER", "http://router.cdn-cache")
+LUA_SSL_TRUSTED_CERTIFICATE = "/etc/ssl/certs/ca-certificates.crt"
 ACME_CHALLENGE_ROOT = os.getenv("ACME_CHALLENGE_ROOT", "/var/lib/cwm-cdn/acme-challenges")
 TLS_VERSIONS = ("TLSv1.2", "TLSv1.3")
+
+LUA_SSL_CONFIG = f'''lua_ssl_trusted_certificate {LUA_SSL_TRUSTED_CERTIFICATE};
+lua_ssl_verify_depth 5;'''
 
 
 DOMAIN_CONF_TEMPLATE = '''
@@ -19,18 +24,57 @@ server {
     ssl_certificate_key __KEY_PATH__;
     ssl_protocols __TLS_PROTOCOLS__;
     __SERVER_NGINX_CONFIG__
+    __EXTRA_LOCATION_NGINX_CONFIG__
     location / {
         __ACCESS_LOG_CONFIG__
-        proxy_pass __CDN_CACHE_ROUTER__;
-        proxy_set_header X-CWMCDN-Tenant-Name __TENANT_NAME__;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Request-ID $request_id;
+        __POLICY_LOCATION_NGINX_CONFIG__
+        __CACHE_ROUTING_NGINX_CONFIG__
         __LOCATION_NGINX_CONFIG__
-        
-        if ($request_method !~ ^(GET|HEAD)$ ) {
-            proxy_pass http://127.0.0.1:80;
-        }
     }
 }
+'''
+
+
+CACHE_ENABLED_LOCATION_CONFIG_TEMPLATE = '''
+        proxy_pass __CDN_CACHE_ROUTER__;
+        proxy_set_header X-CWMCDN-Tenant-Name __TENANT_NAME__;
+        proxy_set_header X-CWMCDN-Cache-Enabled true;
+        proxy_set_header X-CWMCDN-Cache-Mode __CACHE_MODE__;
+        proxy_set_header X-CWMCDN-Cache-Edge-TTL-Seconds __CACHE_EDGE_TTL_SECONDS__;
+        proxy_set_header X-CWMCDN-Cache-Respect-Origin-Cache-Control __CACHE_RESPECT_ORIGIN_CACHE_CONTROL__;
+        proxy_set_header X-CWMCDN-Cache-Status-Header __CACHE_STATUS_HEADER__;
+        __CACHE_STATUS_ADD_HEADER__
+        if ($request_method !~ ^(GET|HEAD)$ ) {
+            __CACHE_BYPASS_ADD_HEADER__
+            proxy_pass http://127.0.0.1:80;
+        }
+'''
+
+
+CACHE_DISABLED_LOCATION_CONFIG_TEMPLATE = '''
+        __CACHE_BYPASS_ADD_HEADER__
+        proxy_pass http://127.0.0.1:80;
+        proxy_set_header X-CWMCDN-Tenant-Name __TENANT_NAME__;
+        proxy_set_header X-CWMCDN-Cache-Enabled false;
+'''
+
+
+CAPTCHA_RUNTIME_LOCATION_TEMPLATE = '''
+    location ^~ /__cwmcdn/captcha/ {
+        access_log off;
+        content_by_lua_block {
+            local cwm_policy = require "cwm_policy"
+            local policy = cwm_policy.decode_policy(__POLICY_JSON__)
+            local ok, status = cwm_policy.handle_captcha(policy, {
+                signing_key_path = __CAPTCHA_SIGNING_KEY_PATH_JSON__,
+            })
+            if not ok then
+                return ngx.exit(status or ngx.HTTP_INTERNAL_SERVER_ERROR)
+            end
+        }
+    }
 '''
 
 
@@ -38,6 +82,8 @@ DOMAIN_HTTP_CONF_TEMPLATE = '''
 server {
     listen 80;
     server_name  __SERVER_NAME__;
+    __SERVER_NGINX_CONFIG__
+    __EXTRA_LOCATION_NGINX_CONFIG__
     location ^~ /.well-known/acme-challenge/ {
         access_log off;
         root __ACME_CHALLENGE_ROOT__;
@@ -52,10 +98,10 @@ server {
 
 DOMAIN_HTTP_PROXY_LOCATION_CONFIG_TEMPLATE = '''
         __ACCESS_LOG_CONFIG__
-        proxy_pass __CDN_CACHE_ROUTER__;
-        proxy_set_header X-CWMCDN-Tenant-Name __TENANT_NAME__;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto http;
+        __POLICY_LOCATION_NGINX_CONFIG__
+        __CACHE_ROUTING_NGINX_CONFIG__
 '''
 
 
@@ -271,6 +317,7 @@ server {
         proxy_pass http://tenant_origin_upstream$origin_request_uri;
         proxy_set_header Host $origin_host;
         proxy_set_header X-Forwarded-Proto $origin_scheme;
+        proxy_set_header X-Request-ID $request_id;
         set_real_ip_from  172.0.0.0/8;
         set_real_ip_from  10.0.0.0/8;
         real_ip_header    X-Forwarded-For;
@@ -287,6 +334,7 @@ server {
         proxy_pass https://tenant_origin_upstream$origin_request_uri;
         proxy_set_header Host $origin_host;
         proxy_set_header X-Forwarded-Proto $origin_scheme;
+        proxy_set_header X-Request-ID $request_id;
         proxy_ssl_server_name on;
         proxy_ssl_name $origin_sni;
         set_real_ip_from  172.0.0.0/8;
@@ -302,9 +350,26 @@ server {
 }
 '''
 
+
 JSON_ESCAPED_LOG_FORMAT = '''
 log_format json_escaped escape=json
   '{'
+    '"schema_version":"cdn_access_log_v1",'
+    '"timestamp":"$time_iso8601",'
+    '"pop_id":"__POP_ID__",'
+    '"cdn_layer":"front",'
+    '"accounting_source":true,'
+    '"tenant":"__TENANT_NAME__",'
+    '"host":"$host",'
+    '"method":"$request_method",'
+    '"request_path":"$uri",'
+    '"bytes_sent":$body_bytes_sent,'
+    '"request_duration_seconds":$request_time,'
+    '"client_ip":"$remote_addr",'
+    '"user_agent":"$http_user_agent",'
+    '"cache_status":"$upstream_http_x_cwm_cache_status",'
+    '"selected_origin":"unknown",'
+    '"request_id":"$request_id",'
     '"time_local":"$time_local",'
     '"remote_addr":"$remote_addr",'
     '"request":"$request",'
@@ -322,12 +387,19 @@ log_format json_escaped escape=json
 '''
 
 
+
 HTTP_HASH_CONFIG = '''
 server_names_hash_bucket_size 128;
 server_names_hash_max_size 4096;
+lua_shared_dict cwmcdn_rate_limit 20m;
 '''
 
 CONFIG_PARSE_REGEX = re.compile(r'^([A-Z])(\d+)_(.+)$')
+HTTP_FIELD_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+NGINX_SIZE_RE = re.compile(r"^(\d+)([kKmMgG])?$")
+GLOB_PATH_RE = re.compile(r"^/[A-Za-z0-9._~/%:@+*,=-]*$")
+REDIRECT_TARGET_RE = re.compile(r"^(?:/[A-Za-z0-9._~!&'()*+,=:@/%?-]*|https?://[A-Za-z0-9._~!&'()*+,=:@/%?-]+)$")
+CIDR_RE = re.compile(r"^[0-9A-Fa-f:.]+/[0-9]{1,3}$")
 
 
 def replace_keys(base, d):
@@ -337,8 +409,235 @@ def replace_keys(base, d):
     return out
 
 
-def parse_bool(value):
-    return str(value).lower() in ("1", "true", "yes", "on")
+def validate_header_name(value):
+    assert value == "" or HTTP_FIELD_NAME_RE.match(value), f"Invalid cache status header name: {value}"
+    assert value.lower() not in ("set-cookie", "cookie", "authorization", "host"), f"Unsafe cache status header name: {value}"
+
+
+def get_cache_config(env):
+    status_header = env.get("CACHE_STATUS_HEADER", "X-CWM-Cache-Status")
+    validate_header_name(status_header)
+    edge_ttl = int(env.get("CACHE_EDGE_TTL_SECONDS", "3600"))
+    assert 1 <= edge_ttl <= 30 * 24 * 60 * 60, "CACHE_EDGE_TTL_SECONDS must be between 1 and 2592000"
+    mode = env.get("CACHE_MODE", "cache_everything")
+    assert mode == "cache_everything", "CACHE_MODE must be cache_everything"
+    return {
+        "enabled": parse_bool(env.get("CACHE_ENABLED"), True),
+        "mode": mode,
+        "edge_ttl_seconds": edge_ttl,
+        "respect_origin_cache_control": parse_bool(env.get("CACHE_RESPECT_ORIGIN_CACHE_CONTROL"), True),
+        "status_header": status_header,
+    }
+
+
+def nginx_add_header(header, value):
+    if not header:
+        return ""
+    validate_header_name(header)
+    return f"add_header {header} {value} always;"
+
+
+def get_cache_routing_config(cache_config, tenant_name):
+    bypass_header = nginx_add_header(cache_config["status_header"], "BYPASS")
+    if not cache_config["enabled"]:
+        return replace_keys(CACHE_DISABLED_LOCATION_CONFIG_TEMPLATE, {
+            "__TENANT_NAME__": tenant_name,
+            "__CACHE_BYPASS_ADD_HEADER__": bypass_header,
+        })
+    return replace_keys(CACHE_ENABLED_LOCATION_CONFIG_TEMPLATE, {
+        "__CDN_CACHE_ROUTER__": CDN_CACHE_ROUTER,
+        "__TENANT_NAME__": tenant_name,
+        "__CACHE_MODE__": cache_config["mode"],
+        "__CACHE_EDGE_TTL_SECONDS__": str(cache_config["edge_ttl_seconds"]),
+        "__CACHE_RESPECT_ORIGIN_CACHE_CONTROL__": "true" if cache_config["respect_origin_cache_control"] else "false",
+        "__CACHE_STATUS_HEADER__": cache_config["status_header"] or '""',
+        "__CACHE_STATUS_ADD_HEADER__": nginx_add_header(cache_config["status_header"], f"$upstream_http_{cache_config['status_header'].lower().replace('-', '_')}"),
+        "__CACHE_BYPASS_ADD_HEADER__": bypass_header,
+    })
+
+
+def load_policy(env):
+    if env.get("TENANT_POLICY_JSON"):
+        return json.loads(env["TENANT_POLICY_JSON"])
+    policy_path = env.get("CWM_CDN_POLICY_PATH", "/etc/cwm-cdn/policy.json")
+    if policy_path and os.path.exists(policy_path):
+        with open(policy_path) as f:
+            return json.load(f)
+    return {}
+
+
+def glob_to_nginx_regex(value):
+    assert isinstance(value, str) and value.startswith("/"), f"Invalid policy glob path: {value}"
+    assert GLOB_PATH_RE.match(value), f"Invalid policy glob path: {value}"
+    escaped = re.escape(value).replace(r"\*", ".*")
+    return f"^{escaped}$"
+
+
+def validate_redirect_target(target):
+    assert isinstance(target, str), "Invalid redirect target"
+    assert "\n" not in target and "\r" not in target, "Invalid redirect target"
+    assert not target.startswith("//"), "Invalid redirect target"
+    assert REDIRECT_TARGET_RE.match(target), "Invalid redirect target"
+    assert not any(c in target for c in " $;{}"), "Invalid redirect target"
+
+
+def append_query_preservation(target):
+    if "?" in target:
+        return f"{target}&$args"
+    return f"{target}$is_args$args"
+
+
+def policy_json_literal(policy):
+    return lua_quote(json.dumps(policy, separators=(",", ":"), sort_keys=True))
+
+
+def lua_policy_access_block(policy_literal, signing_key_path=""):
+    return f'''access_by_lua_block {{
+            local cwm_policy = require "cwm_policy"
+            local policy = cwm_policy.decode_policy({policy_literal})
+            local ok, status = cwm_policy.enforce_access(policy, {{
+                signing_key_path = {json.dumps(signing_key_path)},
+            }})
+            if not ok then
+                return ngx.exit(status or ngx.HTTP_INTERNAL_SERVER_ERROR)
+            end
+        }}'''
+
+
+def lua_policy_header_filter_block(policy_literal):
+    return f'''header_filter_by_lua_block {{
+            local cwm_policy = require "cwm_policy"
+            local policy = cwm_policy.decode_policy({policy_literal})
+            cwm_policy.apply_response_redirect(policy)
+        }}'''
+
+
+def lua_policy_body_filter_block():
+    return '''body_filter_by_lua_block {
+            local cwm_policy = require "cwm_policy"
+            cwm_policy.clear_redirect_body()
+        }'''
+
+
+def validate_cidr(value):
+    assert isinstance(value, str) and CIDR_RE.match(value), f"Invalid CIDR: {value}"
+    ipaddress.ip_network(value)
+
+
+def trusted_client_ip_enabled(env=None):
+    source_env = env or os.environ
+    return source_env.get("CWM_CDN_TRUSTED_CLIENT_IP_ENABLED", source_env.get("TRUSTED_CLIENT_IP_ENABLED", "")).lower() in ("1", "true", "yes")
+
+
+def validate_no_raw_policy_keys(value, context="policy"):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            lower_key = key.lower()
+            assert not lower_key.endswith(("config", "snippet")) and "nginx" not in lower_key and "lua" not in lower_key and lower_key not in ("include", "file"), f"Raw config field is not allowed in {context}: {key}"
+            validate_no_raw_policy_keys(child, f"{context}.{key}")
+    elif isinstance(value, list):
+        for i, child in enumerate(value):
+            validate_no_raw_policy_keys(child, f"{context}[{i}]")
+
+
+def optional_policy_list(value, context):
+    if value is None:
+        return []
+    assert isinstance(value, list), f"Invalid {context}: expected list"
+    return value
+
+
+def get_policy_configs(policy, env=None):
+    if not policy:
+        return "", "", ""
+    source_env = env or os.environ
+    validate_no_raw_policy_keys(policy)
+    policy_literal = policy_json_literal(policy)
+    server_lines = []
+    location_lines = []
+    extra_locations = []
+    access_runtime_required = False
+    response_redirect_required = False
+    security = policy.get("security") or {}
+    request = security.get("request") or {}
+    if request.get("maxBodySize"):
+        assert NGINX_SIZE_RE.match(str(request["maxBodySize"])), "Invalid security.request.maxBodySize"
+        server_lines.append(f"client_max_body_size {request['maxBodySize']};")
+    ip_access = security.get("ipAccess") or {}
+    if (ip_access.get("allowCidrs") or ip_access.get("blockCidrs")) and not trusted_client_ip_enabled(source_env):
+        raise AssertionError("security.ipAccess requires trusted client IP support to be enabled")
+    for cidr in optional_policy_list(ip_access.get("blockCidrs"), "security.ipAccess.blockCidrs"):
+        validate_cidr(cidr)
+        location_lines.append(f"deny {cidr};")
+    if ip_access.get("allowCidrs"):
+        for cidr in optional_policy_list(ip_access.get("allowCidrs"), "security.ipAccess.allowCidrs"):
+            validate_cidr(cidr)
+            location_lines.append(f"allow {cidr};")
+        location_lines.append("deny all;")
+    methods = security.get("methods") or {}
+    for method in optional_policy_list(methods.get("block"), "security.methods.block"):
+        assert re.match(r"^[A-Z]+$", method), f"Invalid blocked method: {method}"
+        location_lines.append(f"if ($request_method = {method}) {{ return 403; }}")
+    if methods.get("allow"):
+        allowed = "|".join(re.escape(method) for method in methods["allow"])
+        location_lines.append(f"if ($request_method !~ ^({allowed})$) {{ return 403; }}")
+    urls = security.get("urls") or {}
+    for rule in optional_policy_list(urls.get("block"), "security.urls.block"):
+        match = rule.get("match") or {}
+        assert match.get("type") == "glob", "Only glob URL block rules are supported"
+        location_lines.append(f"if ($uri ~ {glob_to_nginx_regex(match.get('path'))}) {{ return 403; }}")
+    rate_limit = security.get("rateLimit") or {}
+    if rate_limit.get("enabled"):
+        assert isinstance(rate_limit.get("requests"), int) and rate_limit["requests"] >= 1, "Invalid security.rateLimit.requests"
+        assert int(rate_limit.get("burst", 0)) >= 0, "Invalid security.rateLimit.burst"
+        assert rate_limit.get("key") in (None, "", "clientIp"), "Only clientIp rate limiting is supported"
+        assert trusted_client_ip_enabled(source_env), "security.rateLimit.key=clientIp requires trusted client IP support to be enabled"
+        assert rate_limit.get("action", "block") in ("block", "captcha"), "Invalid security.rateLimit.action"
+        access_runtime_required = True
+    captcha = policy.get("captcha") or {}
+    if rate_limit.get("enabled") and rate_limit.get("action", "block") == "captcha":
+        assert captcha.get("enabled"), "security.rateLimit.action=captcha requires captcha.enabled=true"
+    if captcha.get("enabled"):
+        assert captcha.get("provider") == "turnstile", "Only turnstile captcha provider is supported"
+        assert captcha.get("siteKey"), "captcha.siteKey is required"
+        extra_locations.append(replace_keys(CAPTCHA_RUNTIME_LOCATION_TEMPLATE, {
+            "__POLICY_JSON__": policy_literal,
+            "__CAPTCHA_SIGNING_KEY_PATH_JSON__": json.dumps(source_env.get("CAPTCHA_SIGNING_KEY_PATH", "")),
+        }))
+        access_runtime_required = True
+        for rule in optional_policy_list(captcha.get("rules"), "captcha.rules"):
+            match = rule.get("match") or {}
+            assert match.get("type") == "glob", "Only glob captcha rules are supported"
+            glob_to_nginx_regex(match.get('path'))
+    for redirect in optional_policy_list(policy.get("redirects"), "redirects"):
+        if redirect.get("enabled", True) is False:
+            continue
+        when = redirect.get("when") or {}
+        path = when.get("path") or {}
+        assert not (when.get("originStatus") and when.get("upstreamStatus")), "originStatus and upstreamStatus are mutually exclusive"
+        target = redirect.get("to")
+        validate_redirect_target(target)
+        status = int(redirect.get("status", 302))
+        assert status in (301, 302, 307, 308), "Invalid redirect status"
+        for response_status in [*(when.get("originStatus") or []), *(when.get("upstreamStatus") or [])]:
+            assert isinstance(response_status, int) and 100 <= response_status <= 599, "Invalid redirect response status"
+        if when.get("originStatus") or when.get("upstreamStatus"):
+            if path:
+                assert path.get("type") == "glob", "Only path glob redirects are supported"
+                glob_to_nginx_regex(path.get('value'))
+            response_redirect_required = True
+        else:
+            assert path.get("type") == "glob", "Only path glob redirects are supported"
+            assert "*" in path.get("value", "") or target.split("?", 1)[0] != path.get("value"), "Direct self-redirects are not allowed"
+            if redirect.get("preserveQuery"):
+                target = append_query_preservation(target)
+            location_lines.append(f"if ($uri ~ {glob_to_nginx_regex(path.get('value'))}) {{ return {status} {target}; }}")
+    if access_runtime_required:
+        location_lines.append(lua_policy_access_block(policy_literal, source_env.get("CAPTCHA_SIGNING_KEY_PATH", "")))
+    if response_redirect_required:
+        location_lines.append(lua_policy_header_filter_block(policy_literal))
+        location_lines.append(lua_policy_body_filter_block())
+    return "\n    ".join(server_lines), "\n        ".join(location_lines), "\n".join(extra_locations)
 
 
 def tls_protocols(min_version, max_version):
@@ -363,7 +662,7 @@ def parse_configs(env):
     return list(domains.values()), list(origins.values())
 
 
-def get_domain_server_config(i, domain, certs_path, tenant_name, access_log_config):
+def get_domain_server_config(i, domain, certs_path, tenant_name, access_log_config, cache_config=None, policy_configs=None):
     domain = deepcopy(domain)
     assert "NAME" in domain, "NAME must be set in all domain configurations"
     name = domain.pop("NAME")
@@ -389,7 +688,9 @@ def get_domain_server_config(i, domain, certs_path, tenant_name, access_log_conf
         key_path = domain.pop("KEY_PATH", os.path.join(certs_path, "letsencrypt", str(i), "tls.key"))
     server_nginx_config = ""
     location_nginx_config = ""
-    # TODO: pop other configs here and add to server/location nginx configs
+    policy_server_config, policy_location_config, policy_extra_locations = policy_configs or ("", "", "")
+    if policy_server_config:
+        server_nginx_config = policy_server_config
     assert len(domain) == 0, f"Unknown domain configuration keys: {', '.join(domain.keys())}"
     server_config = DOMAIN_CONF_TEMPLATE
     server_config = replace_keys(server_config, {
@@ -399,6 +700,9 @@ def get_domain_server_config(i, domain, certs_path, tenant_name, access_log_conf
         "__TLS_PROTOCOLS__": protocols,
         "__TENANT_NAME__": tenant_name,
         "__SERVER_NGINX_CONFIG__": server_nginx_config,
+        "__EXTRA_LOCATION_NGINX_CONFIG__": policy_extra_locations,
+        "__POLICY_LOCATION_NGINX_CONFIG__": policy_location_config,
+        "__CACHE_ROUTING_NGINX_CONFIG__": get_cache_routing_config(cache_config or get_cache_config({}), tenant_name),
         "__LOCATION_NGINX_CONFIG__": location_nginx_config,
         "__CDN_CACHE_ROUTER__": CDN_CACHE_ROUTER,
         "__ACCESS_LOG_CONFIG__": access_log_config if access_log_config else '',
@@ -410,20 +714,24 @@ def get_domain_server_config(i, domain, certs_path, tenant_name, access_log_conf
             "__TENANT_NAME__": tenant_name,
             "__CDN_CACHE_ROUTER__": CDN_CACHE_ROUTER,
             "__ACCESS_LOG_CONFIG__": access_log_config if access_log_config else '',
+            "__POLICY_LOCATION_NGINX_CONFIG__": policy_location_config,
+            "__CACHE_ROUTING_NGINX_CONFIG__": get_cache_routing_config(cache_config or get_cache_config({}), tenant_name),
         }).strip()
     http_server_config = replace_keys(DOMAIN_HTTP_CONF_TEMPLATE, {
         "__SERVER_NAME__": name,
+        "__SERVER_NGINX_CONFIG__": server_nginx_config,
+        "__EXTRA_LOCATION_NGINX_CONFIG__": policy_extra_locations,
         "__ACME_CHALLENGE_ROOT__": ACME_CHALLENGE_ROOT,
         "__HTTP_LOCATION_CONFIG__": http_location_config,
     })
     return "\n".join([server_config, http_server_config])
 
 
-def get_domains_server_configs(domains, certs_path, tenant_name, access_log_config):
-    server_configs = [JSON_ESCAPED_LOG_FORMAT]
+def get_domains_server_configs(domains, certs_path, tenant_name, access_log_config, cache_config=None, policy_configs=None, pop_id="unknown"):
+    server_configs = [replace_keys(JSON_ESCAPED_LOG_FORMAT, {"__TENANT_NAME__": tenant_name, "__POP_ID__": pop_id})]
     os.makedirs(certs_path, exist_ok=True)
     for i, domain in enumerate(domains):
-        server_configs.append(get_domain_server_config(i, domain, certs_path, tenant_name, access_log_config))
+        server_configs.append(get_domain_server_config(i, domain, certs_path, tenant_name, access_log_config, cache_config, policy_configs))
     return server_configs
 
 
@@ -472,7 +780,6 @@ def parse_duration_seconds(value, default):
     if seconds <= 0:
         raise AssertionError(f"duration value must be positive: {value}")
     return seconds
-
 
 def lua_quote(value):
     return json.dumps(str(value))
@@ -583,17 +890,22 @@ include /etc/nginx/metrics_server.conf;'''
 
 def get_default_conf(certs_path, env):
     tenant_name = env["TENANT_NAME"]
-    domain_access_log_path = "/var/log/nginx/access.logjson" if env.get("ENABLE_TENANT_ACCESS_LOGS") in ("1", "true", "yes") else ""
+    access_logs_enabled = (env.get("ENABLE_TENANT_ACCESS_LOGS") in ("1", "true", "yes") or env.get("ENABLE_PLATFORM_LOGS") in ("1", "true", "yes"))
+    domain_access_log_path = "/var/log/nginx/access.logjson" if access_logs_enabled else ""
     if domain_access_log_path:
         domain_access_log_config = f'access_log {domain_access_log_path} json_escaped;'
     else:
         domain_access_log_config = 'access_log off;'
     domains, origins = parse_configs(env)
     assert len(domains) > 0, "At least one domain configuration is required"
+    cache_config = get_cache_config(env)
+    policy_configs = get_policy_configs(load_policy(env), env)
+    pop_id = env.get("POP_ID", env.get("CWM_CDN_POP_ID", "unknown"))
     assert len(origins) >= 1, "At least one origin configuration is required"
     return "\n".join([
+        LUA_SSL_CONFIG,
         HTTP_HASH_CONFIG,
-        *get_domains_server_configs(domains, certs_path, tenant_name, domain_access_log_config),
+        *get_domains_server_configs(domains, certs_path, tenant_name, domain_access_log_config, cache_config, policy_configs, pop_id),
         get_origin_server_config(origins, tenant_name, env.get(
             "NGINX_RESOLVER_CONFIG",
             "resolver 8.8.8.8 ipv6=off;"
@@ -603,8 +915,10 @@ def get_default_conf(certs_path, env):
 
 
 def main(nginx_conf_path="/etc/nginx", certs_path="/certs", env=None):
+    default_conf = get_default_conf(certs_path, env or os.environ)
+    print(default_conf)
     with open(os.path.join(nginx_conf_path, "conf.d/default.conf"), "w") as f:
-        f.write(get_default_conf(certs_path, env or os.environ))
+        f.write(default_conf)
 
 
 if __name__ == "__main__":

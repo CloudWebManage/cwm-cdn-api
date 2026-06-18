@@ -43,7 +43,18 @@ def main():
     sinks = {}
     if os.environ.get("ENABLE_ES_SINK", "false").lower() in ("1", "true", "yes"):
         sinks["es"] = get_es_logs_sink()
-    if os.environ.get("ENABLE_DEBUG_SINK", "false").lower() in ("1", "true", "yes") or "es" not in sinks:
+    if os.environ.get("ENABLE_PLATFORM_LOGS", "false").lower() in ("1", "true", "yes"):
+        # Platform log delivery is intentionally independent from tenant ES export.
+        # IaC may later replace this with a central collector sink; stdout keeps the
+        # container-runtime log path usable without adding a new dependency here.
+        sinks["platform_console"] = {
+            "type": "console",
+            "inputs": ["parse_nginx"],
+            "encoding": {
+                "codec": "json",
+            },
+        }
+    if os.environ.get("ENABLE_DEBUG_SINK", "false").lower() in ("1", "true", "yes") or not sinks:
         sinks["debug"] = {
             "type": "console",
             "inputs": ["parse_nginx"],
