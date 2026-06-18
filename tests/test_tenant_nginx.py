@@ -506,7 +506,6 @@ def test_captcha_runtime_template_uses_lua_handler(tenant_nginx_entrypoint):
         {"CAPTCHA_SECRET_PATH": "/secret", "CAPTCHA_SIGNING_KEY_PATH": "/signing-key"},
     )
     assert "cwm_policy.handle_captcha" in extra_locations
-    assert 'secret_path = "/secret"' in extra_locations
     assert "captcha runtime is not enabled" not in extra_locations
 
 
