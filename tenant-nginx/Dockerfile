@@ -7,6 +7,7 @@ RUN apk update &&\
     mv vector/bin/vector /usr/local/bin/vector &&\
     rm -rf vector &&\
     mkdir -p /var/vector/data
+RUN opm get ledgetech/lua-resty-http
 RUN if [ ! -f /etc/nginx/metrics_shared_dict.conf ]; then \
         awk '/^lua_shared_dict prometheus_metrics/ { print }' /etc/nginx/metrics.conf > /etc/nginx/metrics_shared_dict.conf; \
     fi && \
