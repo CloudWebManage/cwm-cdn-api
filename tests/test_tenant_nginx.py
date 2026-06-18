@@ -477,6 +477,8 @@ def test_policy_renderer_safe_generated_config_and_policy_runtime(tenant_nginx_e
     assert "location ^~ /__cwmcdn/captcha/" in default_conf
     assert "cwm_policy.enforce_access" in default_conf
     assert "cwm_policy.handle_captcha" in default_conf
+    assert 'signing_key_path = "/etc/cwm-cdn/signing-key/signing-key"' in default_conf
+    assert 'os.getenv("CAPTCHA_SIGNING_KEY_PATH")' not in default_conf
     assert "if ($uri ~ ^/old/.*$) { return 302 /new/$is_args$args; }" in default_conf
     assert "header_filter_by_lua_block" in default_conf
     assert "cwm_policy.apply_response_redirect" in default_conf

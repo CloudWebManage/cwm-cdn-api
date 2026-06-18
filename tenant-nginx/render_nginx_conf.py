@@ -491,12 +491,12 @@ def policy_json_literal(policy):
     return lua_quote(json.dumps(policy, separators=(",", ":"), sort_keys=True))
 
 
-def lua_policy_access_block(policy_literal):
+def lua_policy_access_block(policy_literal, signing_key_path=""):
     return f'''access_by_lua_block {{
             local cwm_policy = require "cwm_policy"
             local policy = cwm_policy.decode_policy({policy_literal})
             local ok, status = cwm_policy.enforce_access(policy, {{
-                signing_key_path = os.getenv("CAPTCHA_SIGNING_KEY_PATH"),
+                signing_key_path = {json.dumps(signing_key_path)},
             }})
             if not ok then
                 return ngx.exit(status or ngx.HTTP_INTERNAL_SERVER_ERROR)
@@ -633,7 +633,7 @@ def get_policy_configs(policy, env=None):
                 target = append_query_preservation(target)
             location_lines.append(f"if ($uri ~ {glob_to_nginx_regex(path.get('value'))}) {{ return {status} {target}; }}")
     if access_runtime_required:
-        location_lines.append(lua_policy_access_block(policy_literal))
+        location_lines.append(lua_policy_access_block(policy_literal, source_env.get("CAPTCHA_SIGNING_KEY_PATH", "")))
     if response_redirect_required:
         location_lines.append(lua_policy_header_filter_block(policy_literal))
         location_lines.append(lua_policy_body_filter_block())
