@@ -39,6 +39,13 @@ local function html_escape(value)
     return value
 end
 
+local function table_or_empty(value)
+    if type(value) == "table" then
+        return value
+    end
+    return {}
+end
+
 local function safe_return_uri(value)
     if type(value) == "table" then
         value = value[1]
@@ -73,7 +80,7 @@ local function status_list_contains(statuses, status)
     if not status then
         return false
     end
-    for _, candidate in ipairs(statuses or {}) do
+    for _, candidate in ipairs(table_or_empty(statuses)) do
         if tonumber(candidate) == status then
             return true
         end
@@ -82,7 +89,8 @@ local function status_list_contains(statuses, status)
 end
 
 local function upstream_status_contains(upstream_status, statuses)
-    if not statuses or #statuses == 0 then
+    statuses = table_or_empty(statuses)
+    if #statuses == 0 then
         return true
     end
     for status in tostring(upstream_status or ""):gmatch("%d+") do
@@ -150,12 +158,13 @@ function M.glob_match(glob, path)
 end
 
 function M.path_requires_captcha(policy, uri)
-    local captcha = (policy or {}).captcha or {}
+    policy = table_or_empty(policy)
+    local captcha = table_or_empty(policy.captcha)
     if not captcha.enabled then
         return false
     end
-    for _, rule in ipairs(captcha.rules or {}) do
-        local match = rule.match or {}
+    for _, rule in ipairs(table_or_empty(captcha.rules)) do
+        local match = table_or_empty(table_or_empty(rule).match)
         if match.type == "glob" and M.glob_match(match.path, uri) then
             return true
         end
@@ -197,7 +206,8 @@ end
 function M.set_captcha_cookie(policy, opts)
     opts = opts or {}
     local ngx_ref = opts.ngx or ngx
-    local captcha = (policy or {}).captcha or {}
+    policy = table_or_empty(policy)
+    local captcha = table_or_empty(policy.captcha)
     local ttl, ttl_err = duration_seconds(captcha.cookieTtl, 1800)
     if not ttl then
         return nil, ttl_err
@@ -213,7 +223,8 @@ function M.set_captcha_cookie(policy, opts)
 end
 
 function M.rate_limit_exceeded(rate_limit, dict, now, client_key, prefix)
-    if not rate_limit or not rate_limit.enabled then
+    rate_limit = table_or_empty(rate_limit)
+    if not rate_limit.enabled then
         return false, 0
     end
     local period, period_err = duration_seconds(rate_limit.period, 60)
@@ -235,18 +246,22 @@ function M.rate_limit_exceeded(rate_limit, dict, now, client_key, prefix)
 end
 
 function M.redirect_for_response(policy, uri, status, upstream_status)
-    for _, redirect in ipairs((policy or {}).redirects or {}) do
+    policy = table_or_empty(policy)
+    for _, redirect in ipairs(table_or_empty(policy.redirects)) do
+        redirect = table_or_empty(redirect)
         if redirect.enabled ~= false then
-            local when = redirect.when or {}
-            local path = when.path or {}
-            local has_origin_status = when.originStatus and #when.originStatus > 0
-            local has_upstream_status = when.upstreamStatus and #when.upstreamStatus > 0
+            local when = table_or_empty(redirect.when)
+            local path = table_or_empty(when.path)
+            local origin_statuses = table_or_empty(when.originStatus)
+            local upstream_statuses = table_or_empty(when.upstreamStatus)
+            local has_origin_status = #origin_statuses > 0
+            local has_upstream_status = #upstream_statuses > 0
             local path_matches = true
             if path.type == "glob" then
                 path_matches = M.glob_match(path.value, uri)
             end
             if (has_origin_status or has_upstream_status) and path_matches then
-                if (not has_origin_status or status_list_contains(when.originStatus, status)) and upstream_status_contains(upstream_status, when.upstreamStatus) then
+                if (not has_origin_status or status_list_contains(origin_statuses, status)) and upstream_status_contains(upstream_status, upstream_statuses) then
                     return redirect
                 end
             end
@@ -263,6 +278,7 @@ end
 
 function M.enforce_access(policy, opts)
     opts = opts or {}
+    policy = table_or_empty(policy)
     local ngx_ref = opts.ngx or ngx
     local uri = ngx_ref.var.uri or "/"
     local captcha_valid = M.has_valid_captcha_cookie(policy, {
@@ -272,7 +288,8 @@ function M.enforce_access(policy, opts)
     if M.path_requires_captcha(policy, uri) and not captcha_valid then
         return redirect_to_captcha(ngx_ref)
     end
-    local rate_limit = (((policy or {}).security or {}).rateLimit or {})
+    local security = table_or_empty(policy.security)
+    local rate_limit = table_or_empty(security.rateLimit)
     if rate_limit.enabled then
         local dict = opts.rate_limit_dict or (ngx_ref.shared and ngx_ref.shared.cwmcdn_rate_limit)
         if not dict then
@@ -334,7 +351,7 @@ function M.verify_turnstile(token, secret, remote_ip, http_factory)
         return false, err or "verification request failed"
     end
     local cjson = require "cjson.safe"
-    local decoded = cjson.decode(res.body or "{}") or {}
+    local decoded = table_or_empty(cjson.decode(res.body or "{}"))
     if res.status == 200 and decoded.success == true then
         return true
     end
@@ -342,7 +359,8 @@ function M.verify_turnstile(token, secret, remote_ip, http_factory)
 end
 
 function M.render_captcha_challenge(policy)
-    local captcha = (policy or {}).captcha or {}
+    policy = table_or_empty(policy)
+    local captcha = table_or_empty(policy.captcha)
     if not captcha.enabled or captcha.provider ~= "turnstile" or captcha.siteKey == nil or captcha.siteKey == "" then
         ngx.status = ngx.HTTP_SERVICE_UNAVAILABLE
         ngx.say("captcha is not configured")
@@ -357,7 +375,8 @@ end
 
 function M.verify_captcha(policy, opts)
     opts = opts or {}
-    local captcha = (policy or {}).captcha or {}
+    policy = table_or_empty(policy)
+    local captcha = table_or_empty(policy.captcha)
     local secret, secret_err = read_file(opts.secret_path)
     if not secret or secret == "" then
         ngx.status = ngx.HTTP_SERVICE_UNAVAILABLE

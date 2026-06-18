@@ -13,6 +13,32 @@ local function shared_dict()
     }
 end
 
+local function ngx_stub()
+    return {
+        var = { uri = "/", request_uri = "/", host = "tenant.example", remote_addr = "127.0.0.1" },
+        HTTP_SERVICE_UNAVAILABLE = 503,
+        HTTP_TOO_MANY_REQUESTS = 429,
+        HTTP_MOVED_TEMPORARILY = 302,
+        ERR = "ERR",
+        time = function()
+            return 1
+        end,
+        escape_uri = function(value)
+            return value
+        end,
+        log = function() end,
+        say = function() end,
+        redirect = function() end,
+    }
+end
+
+local function userdata_value()
+    local value = true
+    return debug.upvalueid(function()
+        return value
+    end, 1)
+end
+
 describe("cwm_policy", function()
     it("matches safe path globs", function()
         assert.is_true(cwm_policy.glob_match("/protected/*", "/protected/a/b"))
@@ -75,5 +101,19 @@ describe("cwm_policy", function()
         }
 
         assert.are.same(policy.redirects[1], cwm_policy.redirect_for_response(policy, "/anything", 404, "404"))
+    end)
+
+    it("treats JSON null optional policy objects as absent", function()
+        local policy = { security = userdata_value(), captcha = userdata_value(), redirects = userdata_value() }
+
+        assert.is_false(cwm_policy.path_requires_captcha(policy, "/"))
+        assert.is_nil(cwm_policy.redirect_for_response(policy, "/", 404, "404"))
+        assert.is_true(cwm_policy.enforce_access(policy, { ngx = ngx_stub() }))
+    end)
+
+    it("treats JSON null rateLimit as disabled", function()
+        local policy = { security = { rateLimit = userdata_value() } }
+
+        assert.is_true(cwm_policy.enforce_access(policy, { ngx = ngx_stub() }))
     end)
 end)
