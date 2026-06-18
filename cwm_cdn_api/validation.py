@@ -196,7 +196,7 @@ def validate_captcha_policy(captcha):
         return
     if not isinstance(captcha, dict):
         raise ValueError("captcha must be an object")
-    _reject_unknown(captcha, {"enabled", "provider", "siteKey", "secretRef", "cookieTtl", "rules"}, "captcha")
+    _reject_unknown(captcha, {"enabled", "provider", "siteKey", "secret", "cookieTtl", "rules"}, "captcha")
     if "enabled" in captcha:
         _validate_bool(captcha["enabled"], "captcha.enabled")
     if captcha.get("enabled"):
@@ -204,12 +204,8 @@ def validate_captcha_policy(captcha):
             raise ValueError("captcha.provider must be turnstile")
         if not captcha.get("siteKey"):
             raise ValueError("captcha.siteKey is required")
-        secret_ref = captcha.get("secretRef") or {}
-        _reject_unknown(secret_ref, {"name", "key"}, "captcha.secretRef")
-        if not secret_ref.get("name") or not secret_ref.get("key"):
-            raise ValueError("captcha.secretRef.name and key are required")
-        if "secret" in captcha or "secretValue" in captcha:
-            raise ValueError("captcha provider secrets must be referenced, not embedded")
+        if not captcha.get("secret"):
+            raise ValueError("captcha.secret is required")
         if captcha.get("cookieTtl"):
             parse_duration_seconds(captcha["cookieTtl"], "captcha.cookieTtl", max_seconds=24 * 60 * 60)
     captcha_rules = captcha.get("rules", [])
