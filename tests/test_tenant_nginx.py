@@ -319,6 +319,7 @@ def assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, 
         tenant_nginx_entrypoint.normalize_origin({"URL": TEST_ORIGIN0["O0_URL"]}, 0, 1)
     ])
     assert default_conf == "\n".join([
+        tenant_nginx_entrypoint.LUA_SSL_CONFIG,
         tenant_nginx_entrypoint.HTTP_HASH_CONFIG,
         tenant_nginx_entrypoint.replace_keys(tenant_nginx_entrypoint.JSON_ESCAPED_LOG_FORMAT, {"__TENANT_NAME__": TEST_TENANT_NAME, "__POP_ID__": "unknown"}),
         expected_domain_server_config(tenant_nginx_entrypoint, 0, certs_path, TEST_DOMAIN0["D0_NAME"], TEST_TENANT_NAME, access_log_config),
@@ -359,6 +360,8 @@ def test_get_default_conf(tenant_nginx_entrypoint, tmpdir):
     env.pop("O1_URL")
     default_conf = tenant_nginx_entrypoint.get_default_conf(certs_path, env)
     assert_test_default_conf(tenant_nginx_entrypoint, default_conf, certs_path, nginx_resolver_config=env["NGINX_RESOLVER_CONFIG"])
+    assert "lua_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;" in default_conf
+    assert "lua_ssl_verify_depth 5;" in default_conf
     assert "server_names_hash_bucket_size 128;" in default_conf
     assert "server_names_hash_max_size 4096;" in default_conf
 

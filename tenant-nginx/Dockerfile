@@ -1,6 +1,6 @@
 FROM ghcr.io/cloudwebmanage/cwm-iac-openresty:e20b995cdaf10a22146d2032fc90eec6d3eb1eb6
 RUN apk update &&\
-    apk add --no-cache supervisor logrotate &&\
+    apk add --no-cache supervisor logrotate ca-certificates &&\
     mkdir vector &&\
     curl -sSfL https://packages.timber.io/vector/0.51.1/vector-0.51.1-x86_64-unknown-linux-musl.tar.gz | \
     tar xzf - -C vector --strip-components=2 &&\

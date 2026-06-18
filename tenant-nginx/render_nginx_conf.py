@@ -8,8 +8,12 @@ from urllib.parse import urlsplit
 
 
 CDN_CACHE_ROUTER = os.getenv("CDN_CACHE_ROUTER", "http://router.cdn-cache")
+LUA_SSL_TRUSTED_CERTIFICATE = "/etc/ssl/certs/ca-certificates.crt"
 ACME_CHALLENGE_ROOT = os.getenv("ACME_CHALLENGE_ROOT", "/var/lib/cwm-cdn/acme-challenges")
 TLS_VERSIONS = ("TLSv1.2", "TLSv1.3")
+
+LUA_SSL_CONFIG = f'''lua_ssl_trusted_certificate {LUA_SSL_TRUSTED_CERTIFICATE};
+lua_ssl_verify_depth 5;'''
 
 
 DOMAIN_CONF_TEMPLATE = '''
@@ -899,6 +903,7 @@ def get_default_conf(certs_path, env):
     pop_id = env.get("POP_ID", env.get("CWM_CDN_POP_ID", "unknown"))
     assert len(origins) >= 1, "At least one origin configuration is required"
     return "\n".join([
+        LUA_SSL_CONFIG,
         HTTP_HASH_CONFIG,
         *get_domains_server_configs(domains, certs_path, tenant_name, domain_access_log_config, cache_config, policy_configs, pop_id),
         get_origin_server_config(origins, tenant_name, env.get(
