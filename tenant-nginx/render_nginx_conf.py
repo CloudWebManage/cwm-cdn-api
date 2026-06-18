@@ -64,7 +64,6 @@ CAPTCHA_RUNTIME_LOCATION_TEMPLATE = '''
             local cwm_policy = require "cwm_policy"
             local policy = cwm_policy.decode_policy(__POLICY_JSON__)
             local ok, status = cwm_policy.handle_captcha(policy, {
-                secret_path = __CAPTCHA_SECRET_PATH_JSON__,
                 signing_key_path = __CAPTCHA_SIGNING_KEY_PATH_JSON__,
             })
             if not ok then
@@ -599,7 +598,6 @@ def get_policy_configs(policy, env=None):
         assert captcha.get("siteKey"), "captcha.siteKey is required"
         extra_locations.append(replace_keys(CAPTCHA_RUNTIME_LOCATION_TEMPLATE, {
             "__POLICY_JSON__": policy_literal,
-            "__CAPTCHA_SECRET_PATH_JSON__": json.dumps(source_env.get("CAPTCHA_SECRET_PATH", "")),
             "__CAPTCHA_SIGNING_KEY_PATH_JSON__": json.dumps(source_env.get("CAPTCHA_SIGNING_KEY_PATH", "")),
         }))
         access_runtime_required = True

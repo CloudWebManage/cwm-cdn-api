@@ -377,7 +377,7 @@ function M.verify_captcha(policy, opts)
     opts = opts or {}
     policy = table_or_empty(policy)
     local captcha = table_or_empty(policy.captcha)
-    local secret, secret_err = read_file(opts.secret_path)
+    local secret = captcha.secret
     if not secret or secret == "" then
         ngx.status = ngx.HTTP_SERVICE_UNAVAILABLE
         ngx.say("captcha secret is not configured")
